@@ -38,12 +38,44 @@ import {
   LogOut,
   ShieldCheck,
   RefreshCw,
+  KeyRound,
+  FileText,
+  Play,
+  Square,
+  Sparkles,
 } from 'lucide-react';
 
-const STORAGE_KEY = 'msj_tier3_demo_v1';
+const STORAGE_KEY = 'msj_tier3_demo_v2';
 const ITEMS_PER_PAGE = 6;
-const VALID_CFO_TABS = ['pnl', 'employees', 'orders', 'inventory', 'expenses', 'promos'];
+const VALID_CFO_TABS = ['pnl', 'employees', 'staff_portal', 'orders', 'inventory', 'expenses', 'promos'];
 const VALID_ACCOUNT_TABS = ['orders', 'saved', 'addresses', 'profile'];
+
+const ACCESS_PRESETS = {
+  'Fulfillment & Stock': {
+    canManageOrders: true,
+    canManageInventory: true,
+    canViewPayroll: false,
+    canViewFinancials: false,
+  },
+  'POS & Orders': {
+    canManageOrders: true,
+    canManageInventory: false,
+    canViewPayroll: false,
+    canViewFinancials: false,
+  },
+  'Full Operations': {
+    canManageOrders: true,
+    canManageInventory: true,
+    canViewPayroll: true,
+    canViewFinancials: false,
+  },
+  'Read-Only Media': {
+    canManageOrders: false,
+    canManageInventory: false,
+    canViewPayroll: false,
+    canViewFinancials: false,
+  },
+};
 
 const INITIAL_DATA = {
   products: [
@@ -233,7 +265,7 @@ const INITIAL_DATA = {
     {
       id: 'emp-1',
       name: 'Maya Lin',
-      email: 'maya@susquehannagoods.demo',
+      email: 'maya@majorstylejunction.demo',
       pin: '1001',
       role: 'DTF Print & Production Lead',
       department: 'Production & DTF',
@@ -242,11 +274,13 @@ const INITIAL_DATA = {
       rate: 19,
       hours: 8,
       active: true,
+      clockedInAt: '',
+      assignedNotes: 'Press 480 GSM hoodies at 315°F for 15s; update size stock after batch.',
     },
     {
       id: 'emp-2',
       name: 'Darius Brooks',
-      email: 'darius@susquehannagoods.demo',
+      email: 'darius@majorstylejunction.demo',
       pin: '1002',
       role: 'Showroom & Pop-Up Associate',
       department: 'Retail & Pop-Up',
@@ -255,11 +289,13 @@ const INITIAL_DATA = {
       rate: 16.5,
       hours: 6,
       active: true,
+      clockedInAt: '',
+      assignedNotes: 'Pack open orders and verify tracking numbers before 4:00 PM USPS pickup.',
     },
     {
       id: 'emp-3',
       name: 'Elena Morales',
-      email: 'elena@susquehannagoods.demo',
+      email: 'elena@majorstylejunction.demo',
       pin: '1003',
       role: 'Lookbook & Drop Photographer',
       department: 'Creative & Media',
@@ -268,6 +304,31 @@ const INITIAL_DATA = {
       rate: 110,
       hours: 1,
       active: false,
+      clockedInAt: '',
+      assignedNotes: 'Deliver raw editorial shots for the Winter Capsule lookbook.',
+    },
+  ],
+  staffResources: [
+    {
+      id: 'doc-1',
+      title: 'DTF Heat Press & Garment Care SOP',
+      category: 'Production',
+      summary: '315°F, medium-heavy pressure, 15s initial press + 5s peel/finish with PTFE sheet.',
+      updated: '2026-11-18',
+    },
+    {
+      id: 'doc-2',
+      title: 'Order Packing & Tracking Checklist',
+      category: 'Fulfillment',
+      summary: 'Verify size tag, include packing slip, enter carrier + tracking #, and mark Shipped.',
+      updated: '2026-11-19',
+    },
+    {
+      id: 'doc-3',
+      title: 'Staff Time-Clock & Overtime Policy',
+      category: 'HR & Payroll',
+      summary: 'Clock in at start of shift and clock out immediately after wrap. Flag missed punches same day.',
+      updated: '2026-11-20',
     },
   ],
   shiftLogs: [
@@ -333,7 +394,50 @@ const INITIAL_DATA = {
   activeCustomerEmail: '',
   staffRole: 'owner', // 'owner' | 'staff'
   staffSignedInName: 'Founder & CFO',
+  activeStaffId: '',
 };
+
+function normalizeState(parsed) {
+  if (!parsed || typeof parsed !== 'object') return INITIAL_DATA;
+  return {
+    ...INITIAL_DATA,
+    ...parsed,
+    products: Array.isArray(parsed.products)
+      ? parsed.products.map((p) => ({ image: '', description: '', ...p }))
+      : INITIAL_DATA.products,
+    employees: Array.isArray(parsed.employees)
+      ? parsed.employees.map((e) => ({
+          email: '',
+          pin: '1000',
+          clockedInAt: '',
+          assignedNotes: '',
+          ...e,
+        }))
+      : INITIAL_DATA.employees,
+    staffResources: Array.isArray(parsed.staffResources)
+      ? parsed.staffResources
+      : INITIAL_DATA.staffResources,
+    shiftLogs: Array.isArray(parsed.shiftLogs) ? parsed.shiftLogs : INITIAL_DATA.shiftLogs,
+    overtimeRule: {
+      ...INITIAL_DATA.overtimeRule,
+      ...(parsed.overtimeRule || {}),
+    },
+    promos: Array.isArray(parsed.promos) ? parsed.promos : INITIAL_DATA.promos,
+    customers: Array.isArray(parsed.customers) ? parsed.customers : INITIAL_DATA.customers,
+    activeCustomerEmail: parsed.activeCustomerEmail || '',
+    staffRole: parsed.staffRole === 'staff' ? 'staff' : 'owner',
+    staffSignedInName: parsed.staffSignedInName || 'Founder & CFO',
+    activeStaffId: parsed.activeStaffId || '',
+    orders: Array.isArray(parsed.orders)
+      ? parsed.orders.map((o) => ({
+          fulfillmentStatus: o.fulfillmentStatus || o.status || 'Unfulfilled',
+          carrier: o.carrier || 'USPS',
+          tracking: o.tracking || '',
+          ...o,
+        }))
+      : INITIAL_DATA.orders,
+  };
+}
 
 function compressImageFile(file, maxDimension = 900) {
   return new Promise((resolve, reject) => {
@@ -396,6 +500,7 @@ export default function App() {
   const [mode, setMode] = useState(initialNav.mode);
   const [cfoTab, setCfoTab] = useState(initialNav.cfoTab);
   const [storageWarning, setStorageWarning] = useState('');
+  const [statusToast, setStatusToast] = useState('');
   const [browserAlertEnabled, setBrowserAlertEnabled] = useState(
     typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'
   );
@@ -405,33 +510,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) return INITIAL_DATA;
-      const parsed = JSON.parse(saved);
-      return {
-        ...INITIAL_DATA,
-        ...parsed,
-        products: Array.isArray(parsed.products)
-          ? parsed.products.map((p) => ({ image: '', description: '', ...p }))
-          : INITIAL_DATA.products,
-        employees: Array.isArray(parsed.employees) ? parsed.employees : INITIAL_DATA.employees,
-        shiftLogs: Array.isArray(parsed.shiftLogs) ? parsed.shiftLogs : INITIAL_DATA.shiftLogs,
-        overtimeRule: {
-          ...INITIAL_DATA.overtimeRule,
-          ...(parsed.overtimeRule || {}),
-        },
-        promos: Array.isArray(parsed.promos) ? parsed.promos : INITIAL_DATA.promos,
-        customers: Array.isArray(parsed.customers) ? parsed.customers : INITIAL_DATA.customers,
-        activeCustomerEmail: parsed.activeCustomerEmail || '',
-        staffRole: parsed.staffRole === 'staff' ? 'staff' : 'owner',
-        staffSignedInName: parsed.staffSignedInName || 'Founder & CFO',
-        orders: Array.isArray(parsed.orders)
-          ? parsed.orders.map((o) => ({
-              fulfillmentStatus: o.fulfillmentStatus || o.status || 'Unfulfilled',
-              carrier: o.carrier || 'USPS',
-              tracking: o.tracking || '',
-              ...o,
-            }))
-          : INITIAL_DATA.orders,
-      };
+      return normalizeState(JSON.parse(saved));
     } catch {
       return INITIAL_DATA;
     }
@@ -448,15 +527,19 @@ export default function App() {
     }
   }, [state]);
 
+  const showToast = (msg) => {
+    setStatusToast(msg);
+  };
+
   const isStaffView = mode === 'cfo' && state.staffRole === 'staff';
   const effectiveCfoTab =
-    isStaffView && ['pnl', 'expenses', 'promos'].includes(cfoTab) ? 'orders' : cfoTab;
+    isStaffView && ['pnl', 'expenses', 'promos'].includes(cfoTab) ? 'staff_portal' : cfoTab;
 
   // Sync mode & tab with browser Back/Forward history + pageshow
   const updateNavigation = (nextMode, nextTab, recordHistory = true) => {
     let safeTab = VALID_CFO_TABS.includes(nextTab) ? nextTab : 'pnl';
     if (nextMode === 'cfo' && state.staffRole === 'staff' && ['pnl', 'expenses', 'promos'].includes(safeTab)) {
-      safeTab = 'orders';
+      safeTab = 'staff_portal';
     }
     const changed = nextMode !== mode || (nextMode === 'cfo' && safeTab !== effectiveCfoTab);
     setMode(nextMode);
@@ -491,8 +574,7 @@ export default function App() {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
-          const parsed = JSON.parse(saved);
-          setState((prev) => ({ ...prev, ...parsed }));
+          setState(normalizeState(JSON.parse(saved)));
         }
       } catch {}
     };
@@ -535,6 +617,16 @@ export default function App() {
   // Field-level error states
   const [empFieldError, setEmpFieldError] = useState({ field: '', message: '' });
   const [checkoutFieldError, setCheckoutFieldError] = useState({ field: '', message: '' });
+
+  // Staff Portal Sign-In & Resource State
+  const [staffLoginForm, setStaffLoginForm] = useState({ identifier: '', pin: '' });
+  const [staffLoginError, setStaffLoginError] = useState('');
+  const [newResourceForm, setNewResourceForm] = useState({
+    title: '',
+    category: 'Operations',
+    summary: '',
+  });
+  const [staffNoteDraft, setStaffNoteDraft] = useState('');
 
   // Customer Account Modal & Auth State
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -620,12 +712,15 @@ export default function App() {
   });
   const [newEmp, setNewEmp] = useState({
     name: '',
+    email: '',
+    pin: '',
     role: '',
     department: 'Production & DTF',
     accessLevel: 'Fulfillment & Stock',
     payType: 'hourly',
     rate: '',
-    hours: '8',
+    hours: '0',
+    assignedNotes: '',
   });
   const [newSku, setNewSku] = useState({
     name: '',
@@ -647,7 +742,26 @@ export default function App() {
     value: '15',
   });
 
+  const employees = state.employees || [];
+  const staffResources = state.staffResources || [];
+  const shiftLogs = state.shiftLogs || [];
+  const overtimeRule = state.overtimeRule || { basis: 'week', threshold: 40, multiplier: 1.5 };
+  const promos = state.promos || [];
   const customers = state.customers || [];
+
+  const activeStaffMember = useMemo(() => {
+    if (state.activeStaffId) {
+      return employees.find((e) => e.id === state.activeStaffId) || null;
+    }
+    return employees.find((e) => e.active) || employees[0] || null;
+  }, [employees, state.activeStaffId]);
+
+  useEffect(() => {
+    if (activeStaffMember) {
+      setStaffNoteDraft(activeStaffMember.assignedNotes || '');
+    }
+  }, [activeStaffMember?.id, activeStaffMember?.assignedNotes]);
+
   const activeCustomer = useMemo(() => {
     if (!state.activeCustomerEmail) return null;
     return (
@@ -671,7 +785,6 @@ export default function App() {
     return state.products.filter((p) => savedSet.has(p.id));
   }, [activeCustomer, state.products]);
 
-  // Pre-fill checkout form when customer signs in
   useEffect(() => {
     if (activeCustomer) {
       const defAddr =
@@ -813,7 +926,6 @@ export default function App() {
       return;
     }
 
-    // Sign In
     if (!authForm.password) {
       setAuthFieldError({ field: 'password', message: 'Enter your password.' });
       authPasswordRef.current?.focus();
@@ -866,6 +978,7 @@ export default function App() {
     }));
     setEditingOrderId('');
     setEditingOrderAddress('');
+    showToast(`Shipping address updated for order ${orderId}.`);
   };
 
   const handleCancelUnfulfilledOrder = (orderId) => {
@@ -903,6 +1016,7 @@ export default function App() {
           : o
       ),
     }));
+    showToast(`Order ${orderId} cancelled and inventory restored.`);
   };
 
   const handleAddCustomerAddress = (e) => {
@@ -1011,15 +1125,106 @@ export default function App() {
     openCustomerPortal('orders');
   };
 
-  const switchStaffRole = (nextRole) => {
+  const switchStaffRole = (nextRole, staffObj = null) => {
     const isStaff = nextRole === 'staff';
+    const chosenStaff = staffObj || activeStaffMember || employees[0];
     setState((prev) => ({
       ...prev,
       staffRole: isStaff ? 'staff' : 'owner',
-      staffSignedInName: isStaff ? 'Maya Lin (Staff)' : 'Founder & CFO',
+      staffSignedInName: isStaff
+        ? `${chosenStaff?.name || 'Staff'} (${chosenStaff?.role || 'Team'})`
+        : 'Founder & CFO',
+      activeStaffId: isStaff && chosenStaff ? chosenStaff.id : prev.activeStaffId,
     }));
-    if (isStaff && ['pnl', 'expenses', 'promos'].includes(cfoTab)) {
-      updateNavigation('cfo', 'orders');
+    if (isStaff) {
+      updateNavigation('cfo', 'staff_portal');
+    }
+  };
+
+  const handleStaffPortalSignIn = (e) => {
+    e.preventDefault();
+    setStaffLoginError('');
+    const idQuery = staffLoginForm.identifier.trim().toLowerCase();
+    const pinQuery = staffLoginForm.pin.trim();
+
+    const matched = employees.find((emp) => {
+      const emailMatch = (emp.email || '').toLowerCase() === idQuery;
+      const nameMatch = (emp.name || '').toLowerCase() === idQuery;
+      const idMatch = (emp.id || '').toLowerCase() === idQuery;
+      return (emailMatch || nameMatch || idMatch) && String(emp.pin || '1000') === pinQuery;
+    });
+
+    if (!matched) {
+      setStaffLoginError(
+        'Staff credentials did not match. Try Maya Lin (maya@majorstylejunction.demo / PIN 1001) or Darius Brooks (PIN 1002).'
+      );
+      return;
+    }
+
+    if (!matched.active) {
+      setStaffLoginError(
+        `${matched.name} is currently marked Off-Cycle by Admin. Ask Admin to activate roster status first.`
+      );
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      staffRole: 'staff',
+      activeStaffId: matched.id,
+      staffSignedInName: `${matched.name} (${matched.role})`,
+    }));
+    setStaffLoginForm({ identifier: '', pin: '' });
+    showToast(`Signed into Staff Portal as ${matched.name}.`);
+  };
+
+  const handleStaffClockToggle = () => {
+    if (!activeStaffMember) return;
+    const now = new Date();
+    const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateLabel = now.toISOString().slice(0, 10);
+
+    if (!activeStaffMember.clockedInAt) {
+      setState((prev) => ({
+        ...prev,
+        employees: (prev.employees || []).map((emp) =>
+          emp.id === activeStaffMember.id ? { ...emp, clockedInAt: timeLabel } : emp
+        ),
+      }));
+      showToast(`${activeStaffMember.name} clocked in at ${timeLabel}.`);
+    } else {
+      const addedHours = 4;
+      const updatedEmployees = employees.map((emp) =>
+        emp.id === activeStaffMember.id
+          ? {
+              ...emp,
+              clockedInAt: '',
+              hours: Number((Number(emp.hours || 0) + addedHours).toFixed(2)),
+            }
+          : emp
+      );
+      const updatedEmp = updatedEmployees.find((e) => e.id === activeStaffMember.id);
+      const earnedEstimate =
+        updatedEmp?.payType === 'hourly' ? Number((addedHours * Number(updatedEmp.rate || 0)).toFixed(2)) : 0;
+
+      const newLog = {
+        id: `sh-${Date.now()}`,
+        date: dateLabel,
+        empName: activeStaffMember.name,
+        clockIn: activeStaffMember.clockedInAt,
+        clockOut: timeLabel,
+        hours: addedHours,
+        otHours: 0,
+        earned: earnedEstimate,
+        note: 'Logged via Staff Portal Clock-Out',
+      };
+
+      setState((prev) => ({
+        ...prev,
+        employees: updatedEmployees,
+        shiftLogs: [newLog, ...(prev.shiftLogs || [])],
+      }));
+      showToast(`${activeStaffMember.name} clocked out at ${timeLabel} (+${addedHours}h logged).`);
     }
   };
 
@@ -1032,10 +1237,12 @@ export default function App() {
     setLastPlacedOrder(null);
     setPostOrderAccountPrompt(null);
     setStorageWarning('');
+    setStatusToast('');
     setEmpFieldError({ field: '', message: '' });
     setCheckoutFieldError({ field: '', message: '' });
     setAuthFieldError({ field: '', message: '' });
     setAuthNotice('');
+    setStaffLoginError('');
     notifiedOvertimeRef.current.clear();
     setStoreSearch('');
     setStoreCategory('All');
@@ -1083,11 +1290,6 @@ export default function App() {
       setStorageWarning(err.message || 'Unable to upload image.');
     }
   };
-
-  const employees = state.employees || [];
-  const shiftLogs = state.shiftLogs || [];
-  const overtimeRule = state.overtimeRule || { basis: 'week', threshold: 40, multiplier: 1.5 };
-  const promos = state.promos || [];
 
   const getEmployeeBreakdown = (emp) => {
     if (!emp || !emp.active) {
@@ -1153,7 +1355,6 @@ export default function App() {
     }
   };
 
-  // Fix Missed Clock-Out / Log Shift Handlers
   const openShiftCorrectionModal = (existingLog = null) => {
     if (existingLog) {
       setShiftForm({
@@ -1169,11 +1370,11 @@ export default function App() {
       setShiftForm({
         id: '',
         date: '2026-11-21',
-        empName: employees[0]?.name || 'Maya Lin',
+        empName: activeStaffMember?.name || employees[0]?.name || 'Maya Lin',
         clockIn: '09:00 AM',
         clockOut: '05:00 PM',
         hours: '8',
-        note: 'Missed clock-out corrected by admin',
+        note: 'Missed clock-out corrected',
       });
     }
     setShiftModalOpen(true);
@@ -1223,7 +1424,7 @@ export default function App() {
       hours: nextHours,
       otHours: nextBreakdown.otHours,
       earned: shiftDeltaPay,
-      note: shiftForm.note.trim() || 'Shift corrected by admin',
+      note: shiftForm.note.trim() || 'Shift corrected',
     };
 
     const nextLogs = existingLog
@@ -1236,6 +1437,7 @@ export default function App() {
       shiftLogs: nextLogs,
     }));
     setShiftModalOpen(false);
+    showToast(`Shift entry saved for ${shiftForm.empName} (${nextHours}h).`);
   };
 
   const stepEmployeeHours = (empId, deltaOrZero) => {
@@ -1254,13 +1456,11 @@ export default function App() {
     }));
   };
 
-  // Dynamic Catalog Categories
   const catalogCategories = useMemo(() => {
     const unique = Array.from(new Set(state.products.map((p) => p.category).filter(Boolean)));
     return ['All', ...unique];
   }, [state.products]);
 
-  // Filtered & Sorted Storefront Products
   const filteredStoreProducts = useMemo(() => {
     const query = storeSearch.trim().toLowerCase();
     const list = state.products.filter((prod) => {
@@ -1346,7 +1546,6 @@ export default function App() {
     setSelectedProd(prod);
   };
 
-  // Cart & Stock-Aware Quantity Handlers
   const addItemToCart = (prod, size) => {
     const available = Number(prod.sizeStock?.[size] || 0);
     if (available <= 0) {
@@ -1387,6 +1586,42 @@ export default function App() {
     setCartOpen(true);
   };
 
+  const handleReorderItems = (orderItems) => {
+    setCart((prevCart) => {
+      const nextCart = [...prevCart];
+      (orderItems || []).forEach((it) => {
+        const prod = state.products.find((p) => p.id === it.id);
+        const available = Number(prod?.sizeStock?.[it.size] || 0);
+        if (!prod || available <= 0) return;
+
+        const addQty = Math.min(Number(it.qty || 1), available);
+        const existingIdx = nextCart.findIndex(
+          (c) => c.id === prod.id && c.size === it.size
+        );
+
+        if (existingIdx > -1) {
+          nextCart[existingIdx] = {
+            ...nextCart[existingIdx],
+            qty: Math.min(available, nextCart[existingIdx].qty + addQty),
+          };
+        } else {
+          nextCart.push({
+            id: prod.id,
+            name: prod.name,
+            price: prod.price,
+            unitCost: prod.unitCost,
+            image: prod.image || '',
+            size: it.size,
+            qty: addQty,
+          });
+        }
+      });
+      return nextCart;
+    });
+    setAccountModalOpen(false);
+    setCartOpen(true);
+  };
+
   const updateCartItemQty = (index, delta) => {
     const entry = cart[index];
     if (!entry) return;
@@ -1407,7 +1642,6 @@ export default function App() {
     setCart(cart.filter((_, idx) => idx !== index));
   };
 
-  // Customer Order Lookup Handler
   const handleCustomerTrackLookup = (e) => {
     e.preventDefault();
     const idQuery = trackQuery.orderId.trim().replace(/^#/, '').toUpperCase();
@@ -1420,7 +1654,6 @@ export default function App() {
     setTrackResult(match || 'NOT_FOUND');
   };
 
-  // Universal Admin Omnisearch
   const adminOmnisearchResults = useMemo(() => {
     const q = adminGlobalSearch.trim().toLowerCase();
     if (!q) {
@@ -1451,7 +1684,7 @@ export default function App() {
     });
 
     const matchedEmployees = employees.filter((e) =>
-      `${e.name} ${e.role} ${e.department} ${e.accessLevel} ${e.payType} ${
+      `${e.name} ${e.email || ''} ${e.role} ${e.department} ${e.accessLevel} ${e.payType} ${
         e.active ? 'active' : 'off-cycle'
       }`
         .toLowerCase()
@@ -1601,9 +1834,10 @@ export default function App() {
       ]),
       [],
       ['SECTION 3: TEAM PAYROLL LEDGER'],
-      ['Employee', 'Role', 'Department', 'Pay Type', 'Rate', 'Hours', 'Status', 'Period Payout'],
+      ['Employee', 'Email', 'Role', 'Department', 'Pay Type', 'Rate', 'Hours', 'Status', 'Period Payout'],
       ...employees.map((e) => [
         `"${e.name}"`,
+        `"${e.email || ''}"`,
         `"${e.role}"`,
         `"${e.department}"`,
         e.payType,
@@ -1727,7 +1961,7 @@ export default function App() {
     setCheckoutForm({ name: '', email: '', address: '' });
     setLastPlacedOrder({ id, email: normalizedEmail });
     setOrderBanner(
-      `Order ${id} ($${cartTotal.toFixed(2)}) confirmed! Track it anytime with Track Order or open Behind the Scenes (CFO Suite) to fulfill it.`
+      `Order ${id} ($${cartTotal.toFixed(2)}) confirmed! Track it anytime with Track Order or manage it in Behind the Scenes.`
     );
 
     const alreadyHasAccount = customers.some(
@@ -1773,7 +2007,7 @@ export default function App() {
     const q = employeeSearch.trim().toLowerCase();
     if (!q) return employees;
     return employees.filter((emp) =>
-      `${emp.name} ${emp.role} ${emp.department} ${emp.accessLevel} ${emp.payType}`
+      `${emp.name} ${emp.email || ''} ${emp.role} ${emp.department} ${emp.accessLevel} ${emp.payType}`
         .toLowerCase()
         .includes(q)
     );
@@ -1811,6 +2045,9 @@ export default function App() {
     [employees, payStubEmpId]
   );
 
+  const activePermissions =
+    ACCESS_PRESETS[activeStaffMember?.accessLevel] || ACCESS_PRESETS['Fulfillment & Stock'];
+
   return (
     <div className="min-h-screen bg-[#F6F4EF] text-[#1C1917]">
       {/* TOP DEMO CONTROL BAR */}
@@ -1821,7 +2058,7 @@ export default function App() {
               Tier 03 Flagship &amp; CFO
             </span>
             <span className="hidden text-xs text-stone-300 xl:inline">
-              Storefront, Payroll &amp; Live CFO Ledger
+              Storefront, Staff Portal, Payroll &amp; CFO Suite
             </span>
           </div>
 
@@ -1863,7 +2100,7 @@ export default function App() {
                       : 'text-stone-300 hover:text-white'
                   }`}
                 >
-                  Owner
+                  Admin / Owner
                 </button>
                 <button
                   type="button"
@@ -1874,7 +2111,7 @@ export default function App() {
                       : 'text-stone-300 hover:text-white'
                   }`}
                 >
-                  Staff View
+                  Staff Portal
                 </button>
               </div>
             )}
@@ -1978,6 +2215,19 @@ export default function App() {
           </header>
 
           <main className="mx-auto max-w-6xl px-6 py-12">
+            {statusToast && (
+              <div className="mb-6 flex items-center justify-between border border-amber-700/40 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-950">
+                <span>{statusToast}</span>
+                <button
+                  type="button"
+                  onClick={() => setStatusToast('')}
+                  className="cursor-pointer font-bold underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             <div className="grid gap-8 border-b border-stone-300 pb-10 lg:grid-cols-12 lg:items-end">
               <div className="lg:col-span-7">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-800">
@@ -1989,8 +2239,8 @@ export default function App() {
               </div>
               <div className="border-l border-stone-400 pl-6 lg:col-span-5">
                 <p className="text-sm leading-relaxed text-stone-700">
-                  Save items to your wishlist, manage addresses &amp; fit size in <strong>My Account</strong>, or switch to{' '}
-                  <strong>Behind the Scenes (CFO Suite)</strong> to test Owner vs. Staff role permissions and live P&amp;L.
+                  Manage orders, saved wishlist items, addresses &amp; fit size in <strong>My Account</strong>, or switch to{' '}
+                  <strong>Behind the Scenes</strong> to provision staff accounts, run the <strong>Staff Portal</strong>, and monitor live P&amp;L.
                 </p>
               </div>
             </div>
@@ -2506,7 +2756,7 @@ export default function App() {
         </>
       ) : (
         /* =====================================================================
-           VIEW 2: BEHIND THE SCENES — TIER 03 EXECUTIVE CFO & OPERATIONS SUITE
+           VIEW 2: BEHIND THE SCENES — ADMIN, STAFF PORTAL & CFO SUITE
            ===================================================================== */
         <main className="mx-auto max-w-6xl px-6 py-10">
           {storageWarning && (
@@ -2522,14 +2772,27 @@ export default function App() {
             </div>
           )}
 
+          {statusToast && (
+            <div className="mb-5 flex items-center justify-between border border-amber-700/40 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-950">
+              <span>{statusToast}</span>
+              <button
+                type="button"
+                onClick={() => setStatusToast('')}
+                className="cursor-pointer font-bold underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {isStaffView && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border border-stone-400 bg-white px-4 py-3 text-xs">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-amber-800" />
                 <span>
-                  <strong>Restricted Staff View ({state.staffSignedInName}):</strong> Orders,
-                  Inventory Stock &amp; Shift Logs are active. Financial P&amp;L, profit margins,
-                  expenses &amp; promo management are hidden.
+                  <strong>Staff Portal Active ({state.staffSignedInName}):</strong> Access level{' '}
+                  <strong>{activeStaffMember?.accessLevel || 'Fulfillment & Stock'}</strong>. P&amp;L,
+                  expenses &amp; promo management stay locked to Admin/Owner.
                 </span>
               </div>
               <button
@@ -2537,7 +2800,7 @@ export default function App() {
                 onClick={() => switchStaffRole('owner')}
                 className="cursor-pointer bg-[#1C1917] px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-[#F6F4EF]"
               >
-                Switch to Owner
+                Switch to Admin / Owner
               </button>
             </div>
           )}
@@ -2570,7 +2833,7 @@ export default function App() {
           <div className="relative mb-7 border-2 border-[#1C1917] bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">
-                Global Site &amp; Operations Search (Storefront &bull; Orders &bull; Team &bull; Expenses &bull; Promos &bull; P&amp;L)
+                Global Site &amp; Operations Search (Storefront &bull; Orders &bull; Staff &bull; Expenses &bull; Promos &bull; P&amp;L)
               </span>
               <span className="text-[11px] text-stone-500">Shortcut: Ctrl + K</span>
             </div>
@@ -2707,7 +2970,7 @@ export default function App() {
                       <div>
                         <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
                           <Users className="h-3.5 w-3.5" />
-                          Team &amp; Payroll ({adminOmnisearchResults.employees.length})
+                          Team &amp; Staff Accounts ({adminOmnisearchResults.employees.length})
                         </p>
                         <div className="space-y-1.5">
                           {adminOmnisearchResults.employees.map((emp) => (
@@ -2727,7 +2990,7 @@ export default function App() {
                                 }
                                 className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF] hover:bg-amber-800"
                               >
-                                Open Payroll Record
+                                Open Staff Record
                               </button>
                             </div>
                           ))}
@@ -2811,10 +3074,10 @@ export default function App() {
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-stone-300 pb-5">
             <div>
               <span className="text-xs font-bold uppercase tracking-[0.18em] text-amber-800">
-                Behind the Scenes &bull; Executive CFO, Team &amp; Operations Suite
+                Behind the Scenes &bull; Executive CFO, Staff Portal &amp; Operations
               </span>
               <h1 className="mt-1 font-serif text-3xl font-normal text-[#1C1917]">
-                Command Center: P&amp;L, Payroll &amp; Fulfillment
+                Command Center: P&amp;L, Staff Portal &amp; Fulfillment
               </h1>
             </div>
 
@@ -2895,7 +3158,8 @@ export default function App() {
           <div className="mb-6 flex flex-wrap gap-2 border-b border-stone-300 pb-4">
             {[
               { id: 'pnl', label: 'P&L & Profit-First', ownerOnly: true },
-              { id: 'employees', label: `Team & Payroll (${activeEmployeeCount} Active)`, ownerOnly: false },
+              { id: 'employees', label: `Team & Payroll (${activeEmployeeCount} Active)`, ownerOnly: true },
+              { id: 'staff_portal', label: 'Staff Portal & SOPs', ownerOnly: false },
               {
                 id: 'orders',
                 label: `Orders & Fulfillment (${unfulfilledOrdersCount} Open)`,
@@ -3209,426 +3473,488 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 2: TEAM, OVERTIME POLICY, UNIFORM ROSTER & SHIFT LOGS */}
-          {effectiveCfoTab === 'employees' && (
+          {/* TAB 2: ADMIN TEAM PROVISIONING, OVERTIME POLICY & SHIFT LOGS */}
+          {!isStaffView && effectiveCfoTab === 'employees' && (
             <div className="space-y-6">
-              {!isStaffView && (
-                <>
-                  <div className="grid gap-4 sm:grid-cols-4">
-                    <div className="border border-stone-300 bg-white/90 p-4">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                        Active Roster
-                      </span>
-                      <p className="mt-1 text-2xl font-bold text-[#1C1917]">
-                        {activeEmployeeCount}{' '}
-                        <span className="text-xs font-normal text-stone-500">
-                          / {employees.length} total
-                        </span>
-                      </p>
-                    </div>
-                    <div className="border border-stone-300 bg-white/90 p-4">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                        Logged Shift Hours
-                      </span>
-                      <p className="mt-1 text-2xl font-bold text-[#1C1917]">{totalLoggedHours} hrs</p>
-                    </div>
-                    <div className="border border-stone-300 bg-white/90 p-4">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                        Period Payroll Expense
-                      </span>
-                      <p className="mt-1 text-2xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
-                    </div>
-                    <div className="border border-stone-300 bg-white/90 p-4">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                        Payroll % of Revenue
-                      </span>
-                      <p className="mt-1 text-2xl font-bold text-amber-800">{laborPct.toFixed(1)}%</p>
-                    </div>
+              <div className="grid gap-4 sm:grid-cols-4">
+                <div className="border border-stone-300 bg-white/90 p-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                    Active Roster
+                  </span>
+                  <p className="mt-1 text-2xl font-bold text-[#1C1917]">
+                    {activeEmployeeCount}{' '}
+                    <span className="text-xs font-normal text-stone-500">
+                      / {employees.length} total
+                    </span>
+                  </p>
+                </div>
+                <div className="border border-stone-300 bg-white/90 p-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                    Logged Shift Hours
+                  </span>
+                  <p className="mt-1 text-2xl font-bold text-[#1C1917]">{totalLoggedHours} hrs</p>
+                </div>
+                <div className="border border-stone-300 bg-white/90 p-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                    Period Payroll Expense
+                  </span>
+                  <p className="mt-1 text-2xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
+                </div>
+                <div className="border border-stone-300 bg-white/90 p-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                    Payroll % of Revenue
+                  </span>
+                  <p className="mt-1 text-2xl font-bold text-amber-800">{laborPct.toFixed(1)}%</p>
+                </div>
+              </div>
+
+              <div className="border border-stone-300 bg-white/90 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                      Overtime Policy &amp; Alerts
+                    </span>
+                    <h3 className="font-serif text-lg text-[#1C1917]">
+                      Overtime Threshold ({overtimeRule.threshold}h / {overtimeRule.basis} @{' '}
+                      {overtimeRule.multiplier}×)
+                    </h3>
                   </div>
-
-                  <div className="border border-stone-300 bg-white/90 p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
-                          Overtime Policy &amp; Alerts
-                        </span>
-                        <h3 className="font-serif text-lg text-[#1C1917]">
-                          Overtime Threshold ({overtimeRule.threshold}h / {overtimeRule.basis} @{' '}
-                          {overtimeRule.multiplier}×)
-                        </h3>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <select
-                          value={overtimeRule.basis}
-                          onChange={(e) =>
-                            setState((prev) => ({
-                              ...prev,
-                              overtimeRule: { ...prev.overtimeRule, basis: e.target.value },
-                            }))
-                          }
-                          className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
-                        >
-                          <option value="week">Per Week</option>
-                          <option value="day">Per Day</option>
-                        </select>
-                        <input
-                          type="number"
-                          min="1"
-                          step="0.5"
-                          value={overtimeRule.threshold}
-                          onChange={(e) =>
-                            setState((prev) => ({
-                              ...prev,
-                              overtimeRule: {
-                                ...prev.overtimeRule,
-                                threshold: Math.max(1, parseFloat(e.target.value || '40')),
-                              },
-                            }))
-                          }
-                          className="w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5 text-xs font-bold"
-                        />
-                        <select
-                          value={overtimeRule.multiplier}
-                          onChange={(e) =>
-                            setState((prev) => ({
-                              ...prev,
-                              overtimeRule: {
-                                ...prev.overtimeRule,
-                                multiplier: parseFloat(e.target.value || '1.5'),
-                              },
-                            }))
-                          }
-                          className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
-                        >
-                          <option value={1.5}>1.5× Overtime</option>
-                          <option value={1.25}>1.25× Overtime</option>
-                          <option value={2}>2.0× Double-Time</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border border-stone-300 bg-white/90 p-6">
-                    <div className="flex flex-wrap items-end justify-between gap-4">
-                      <div>
-                        <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
-                          <Users className="h-5 w-5 text-amber-800" />
-                          Active Roster &amp; Live Payroll
-                        </h2>
-                        <p className="mt-1 text-xs text-stone-600">
-                          Uniform roster slots for rates, hours, reset, period pay, and pay stubs.
-                        </p>
-                      </div>
-
-                      <div className="relative w-full sm:w-64">
-                        <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
-                        <input
-                          type="text"
-                          value={employeeSearch}
-                          onChange={(e) => setEmployeeSearch(e.target.value)}
-                          placeholder="Search employees or roles..."
-                          className="w-full border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
-                        />
-                        {employeeSearch && (
-                          <button
-                            type="button"
-                            onClick={() => setEmployeeSearch('')}
-                            className="absolute right-2 top-2 cursor-pointer text-stone-500"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        setEmpFieldError({ field: '', message: '' });
-                        if (!newEmp.name.trim()) {
-                          setEmpFieldError({ field: 'name', message: 'Full Name is required.' });
-                          empNameInputRef.current?.focus();
-                          return;
-                        }
-                        if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
-                          setEmpFieldError({
-                            field: 'rate',
-                            message: 'Enter a valid pay rate ($0 or higher).',
-                          });
-                          empRateInputRef.current?.focus();
-                          return;
-                        }
-                        setState({
-                          ...state,
-                          employees: [
-                            ...employees,
-                            {
-                              id: `emp-${Date.now()}`,
-                              name: newEmp.name.trim(),
-                              role: newEmp.role.trim() || 'Studio Associate',
-                              department: newEmp.department,
-                              accessLevel: newEmp.accessLevel,
-                              payType: newEmp.payType,
-                              rate: parseFloat(newEmp.rate) || 0,
-                              hours: newEmp.payType === 'hourly' ? parseFloat(newEmp.hours) || 0 : 1,
-                              active: true,
-                            },
-                          ],
-                        });
-                        setNewEmp({
-                          name: '',
-                          role: '',
-                          department: 'Production & DTF',
-                          accessLevel: 'Fulfillment & Stock',
-                          payType: 'hourly',
-                          rate: '',
-                          hours: '8',
-                        });
-                      }}
-                      className="mt-5 grid gap-2.5 border border-stone-200 bg-[#F6F4EF] p-4 sm:grid-cols-12"
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      value={overtimeRule.basis}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: { ...prev.overtimeRule, basis: e.target.value },
+                        }))
+                      }
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
                     >
-                      <div className="sm:col-span-3">
-                        <input
-                          ref={empNameInputRef}
-                          type="text"
-                          placeholder="Full Name"
-                          value={newEmp.name}
-                          onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
-                          className={`w-full border bg-white px-3 py-2 text-xs ${
-                            empFieldError.field === 'name'
-                              ? 'border-rose-600 ring-2 ring-rose-200'
-                              : 'border-stone-300'
-                          }`}
-                        />
-                      </div>
+                      <option value="week">Per Week</option>
+                      <option value="day">Per Day</option>
+                    </select>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.5"
+                      value={overtimeRule.threshold}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: {
+                            ...prev.overtimeRule,
+                            threshold: Math.max(1, parseFloat(e.target.value || '40')),
+                          },
+                        }))
+                      }
+                      className="w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5 text-xs font-bold"
+                    />
+                    <select
+                      value={overtimeRule.multiplier}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: {
+                            ...prev.overtimeRule,
+                            multiplier: parseFloat(e.target.value || '1.5'),
+                          },
+                        }))
+                      }
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <option value={1.5}>1.5× Overtime</option>
+                      <option value={1.25}>1.25× Overtime</option>
+                      <option value={2}>2.0× Double-Time</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-stone-300 bg-white/90 p-6">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
+                      <Users className="h-5 w-5 text-amber-800" />
+                      Add Staff to Portal, Access Control &amp; Payroll
+                    </h2>
+                    <p className="mt-1 text-xs text-stone-600">
+                      Create staff logins with email + PIN, assign access tiers, or preview how a staff member sees the portal.
+                    </p>
+                  </div>
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
+                    <input
+                      type="text"
+                      value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)}
+                      placeholder="Search staff, email, or role..."
+                      className="w-full border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
+                    />
+                    {employeeSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeSearch('')}
+                        className="absolute right-2 top-2 cursor-pointer text-stone-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setEmpFieldError({ field: '', message: '' });
+                    if (!newEmp.name.trim()) {
+                      setEmpFieldError({ field: 'name', message: 'Full Name is required.' });
+                      empNameInputRef.current?.focus();
+                      return;
+                    }
+                    if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
+                      setEmpFieldError({
+                        field: 'rate',
+                        message: 'Enter a valid pay rate ($0 or higher).',
+                      });
+                      empRateInputRef.current?.focus();
+                      return;
+                    }
+                    const createdId = `emp-${Date.now()}`;
+                    const generatedPin =
+                      newEmp.pin.trim() || String(1000 + employees.length + 1);
+                    const generatedEmail =
+                      newEmp.email.trim().toLowerCase() ||
+                      `${newEmp.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.')}@majorstylejunction.demo`;
+
+                    const createdEmp = {
+                      id: createdId,
+                      name: newEmp.name.trim(),
+                      email: generatedEmail,
+                      pin: generatedPin,
+                      role: newEmp.role.trim() || 'Studio Associate',
+                      department: newEmp.department,
+                      accessLevel: newEmp.accessLevel,
+                      payType: newEmp.payType,
+                      rate: parseFloat(newEmp.rate) || 0,
+                      hours: newEmp.payType === 'hourly' ? parseFloat(newEmp.hours) || 0 : 1,
+                      active: true,
+                      clockedInAt: '',
+                      assignedNotes:
+                        newEmp.assignedNotes.trim() ||
+                        'Welcome to the team—check Staff Portal SOPs and daily tasks.',
+                    };
+
+                    setState({
+                      ...state,
+                      employees: [...employees, createdEmp],
+                      activeStaffId: createdId,
+                    });
+                    setNewEmp({
+                      name: '',
+                      email: '',
+                      pin: '',
+                      role: '',
+                      department: 'Production & DTF',
+                      accessLevel: 'Fulfillment & Stock',
+                      payType: 'hourly',
+                      rate: '',
+                      hours: '0',
+                      assignedNotes: '',
+                    });
+                    showToast(
+                      `Added ${createdEmp.name} to Staff Portal (Email: ${createdEmp.email} • PIN: ${createdEmp.pin}).`
+                    );
+                  }}
+                  className="mt-5 grid gap-2.5 border border-stone-200 bg-[#F6F4EF] p-4 sm:grid-cols-12"
+                >
+                  <div className="sm:col-span-3">
+                    <input
+                      ref={empNameInputRef}
+                      type="text"
+                      placeholder="Staff Full Name *"
+                      value={newEmp.name}
+                      onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
+                      className={`w-full border bg-white px-3 py-2 text-xs ${
+                        empFieldError.field === 'name'
+                          ? 'border-rose-600 ring-2 ring-rose-200'
+                          : 'border-stone-300'
+                      }`}
+                    />
+                  </div>
+                  <input
+                    type="email"
+                    placeholder="Staff Login Email (auto-filled if blank)"
+                    value={newEmp.email}
+                    onChange={(e) => setNewEmp({ ...newEmp, email: e.target.value })}
+                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-3"
+                  />
+                  <input
+                    type="text"
+                    maxLength={8}
+                    placeholder="4-Digit PIN (auto if blank)"
+                    value={newEmp.pin}
+                    onChange={(e) => setNewEmp({ ...newEmp, pin: e.target.value })}
+                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-2"
+                  />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Job Title (e.g. Print Tech)"
+                    value={newEmp.role}
+                    onChange={(e) => setNewEmp({ ...newEmp, role: e.target.value })}
+                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-2"
+                  />
+                  <select
+                    value={newEmp.accessLevel}
+                    onChange={(e) => setNewEmp({ ...newEmp, accessLevel: e.target.value })}
+                    className="border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold sm:col-span-2"
+                  >
+                    <option>Fulfillment &amp; Stock</option>
+                    <option>POS &amp; Orders</option>
+                    <option>Full Operations</option>
+                    <option>Read-Only Media</option>
+                  </select>
+
+                  <select
+                    value={newEmp.department}
+                    onChange={(e) => setNewEmp({ ...newEmp, department: e.target.value })}
+                    className="border border-stone-300 bg-white px-2.5 py-2 text-xs sm:col-span-3"
+                  >
+                    <option>Production &amp; DTF</option>
+                    <option>Fulfillment &amp; Ops</option>
+                    <option>Retail &amp; Pop-Up</option>
+                    <option>Creative &amp; Media</option>
+                  </select>
+
+                  <select
+                    value={newEmp.payType}
+                    onChange={(e) => setNewEmp({ ...newEmp, payType: e.target.value })}
+                    className="border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold sm:col-span-2"
+                  >
+                    <option value="hourly">Hourly ($/hr)</option>
+                    <option value="flat">Flat Stipend ($)</option>
+                  </select>
+
+                  <div className="flex gap-1.5 sm:col-span-2">
+                    <input
+                      ref={empRateInputRef}
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      placeholder={newEmp.payType === 'hourly' ? '$/hr *' : 'Flat $ *'}
+                      value={newEmp.rate}
+                      onChange={(e) => setNewEmp({ ...newEmp, rate: e.target.value })}
+                      className={`w-full border bg-white px-2.5 py-2 text-xs ${
+                        empFieldError.field === 'rate'
+                          ? 'border-rose-600 ring-2 ring-rose-200'
+                          : 'border-stone-300'
+                      }`}
+                    />
+                    {newEmp.payType === 'hourly' && (
                       <input
-                        type="text"
-                        required
-                        placeholder="Job Title (e.g. Print Tech)"
-                        value={newEmp.role}
-                        onChange={(e) => setNewEmp({ ...newEmp, role: e.target.value })}
-                        className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-2"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        placeholder="Hrs"
+                        value={newEmp.hours}
+                        onChange={(e) => setNewEmp({ ...newEmp, hours: e.target.value })}
+                        className="w-16 border border-stone-300 bg-white px-2 py-2 text-xs"
                       />
-                      <select
-                        value={newEmp.department}
-                        onChange={(e) => setNewEmp({ ...newEmp, department: e.target.value })}
-                        className="border border-stone-300 bg-white px-2.5 py-2 text-xs sm:col-span-2"
+                    )}
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Shift task / instructions for staff..."
+                    value={newEmp.assignedNotes}
+                    onChange={(e) => setNewEmp({ ...newEmp, assignedNotes: e.target.value })}
+                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-3"
+                  />
+
+                  <button
+                    type="submit"
+                    className="inline-flex cursor-pointer items-center justify-center gap-1 bg-[#1C1917] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800 sm:col-span-2"
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Add Staff
+                  </button>
+
+                  {empFieldError.message && (
+                    <p className="text-xs font-semibold text-rose-700 sm:col-span-12">
+                      {empFieldError.message}
+                    </p>
+                  )}
+                </form>
+
+                <div className="mt-6 space-y-3">
+                  {filteredEmployees.map((emp) => {
+                    const breakdown = getEmployeeBreakdown(emp);
+                    const payout = breakdown.totalPay;
+                    const showReset = emp.payType === 'hourly' && Number(emp.hours || 0) > 0;
+                    return (
+                      <div
+                        key={emp.id}
+                        className={`grid grid-cols-1 items-center gap-4 border p-5 transition lg:grid-cols-12 ${
+                          highlightedId === emp.id
+                            ? 'border-2 border-amber-700 bg-amber-50/50'
+                            : 'border-stone-300 bg-white'
+                        } ${!emp.active ? 'opacity-65' : ''}`}
                       >
-                        <option>Production &amp; DTF</option>
-                        <option>Fulfillment &amp; Ops</option>
-                        <option>Retail &amp; Pop-Up</option>
-                        <option>Creative &amp; Media</option>
-                      </select>
-                      <select
-                        value={newEmp.payType}
-                        onChange={(e) => setNewEmp({ ...newEmp, payType: e.target.value })}
-                        className="border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold sm:col-span-2"
-                      >
-                        <option value="hourly">Hourly ($/hr)</option>
-                        <option value="flat">Flat Stipend ($)</option>
-                      </select>
-                      <div className="flex gap-1.5 sm:col-span-2">
-                        <input
-                          ref={empRateInputRef}
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          placeholder={newEmp.payType === 'hourly' ? '$/hr' : 'Flat $'}
-                          value={newEmp.rate}
-                          onChange={(e) => setNewEmp({ ...newEmp, rate: e.target.value })}
-                          className={`w-full border bg-white px-2.5 py-2 text-xs ${
-                            empFieldError.field === 'rate'
-                              ? 'border-rose-600 ring-2 ring-rose-200'
-                              : 'border-stone-300'
-                          }`}
-                        />
-                        {newEmp.payType === 'hourly' && (
+                        <div className="min-w-0 lg:col-span-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-base text-[#1C1917]">{emp.name}</strong>
+                            {breakdown.otHours > 0 && (
+                              <span className="border border-amber-600/40 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                                +{breakdown.otHours.toFixed(2)}h OT
+                              </span>
+                            )}
+                            <span className="border border-stone-300 bg-[#F6F4EF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
+                              {emp.department}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-stone-600">
+                            {emp.role} &bull;{' '}
+                            <span className="inline-flex items-center gap-1 text-stone-500">
+                              <Briefcase className="h-3 w-3" />
+                              {emp.accessLevel}
+                            </span>
+                          </p>
+                          <p className="mt-1 text-[11px] text-stone-500">
+                            Portal Login: <strong>{emp.email || 'n/a'}</strong> &bull; PIN:{' '}
+                            <strong>{emp.pin || '1000'}</strong>
+                          </p>
+                        </div>
+
+                        <div className="lg:col-span-2">
+                          <label className="block text-[10px] font-bold uppercase text-stone-500">
+                            {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
+                          </label>
                           <input
                             type="number"
-                            required
                             min="0"
                             step="0.5"
-                            placeholder="Hrs"
-                            value={newEmp.hours}
-                            onChange={(e) => setNewEmp({ ...newEmp, hours: e.target.value })}
-                            className="w-16 border border-stone-300 bg-white px-2 py-2 text-xs"
+                            value={emp.rate}
+                            onChange={(e) =>
+                              setState({
+                                ...state,
+                                employees: employees.map((item) =>
+                                  item.id === emp.id
+                                    ? { ...item, rate: parseFloat(e.target.value) || 0 }
+                                    : item
+                                ),
+                              })
+                            }
+                            className="mt-1 w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
                           />
-                        )}
-                      </div>
-                      <button
-                        type="submit"
-                        className="inline-flex cursor-pointer items-center justify-center gap-1 bg-[#1C1917] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800 sm:col-span-1"
-                      >
-                        <UserPlus className="h-3.5 w-3.5" />
-                        Add
-                      </button>
-                      {empFieldError.message && (
-                        <p className="text-xs font-semibold text-rose-700 sm:col-span-12">
-                          {empFieldError.message}
-                        </p>
-                      )}
-                    </form>
+                        </div>
 
-                    <div className="mt-6 space-y-3">
-                      {filteredEmployees.map((emp) => {
-                        const breakdown = getEmployeeBreakdown(emp);
-                        const payout = breakdown.totalPay;
-                        const showReset = emp.payType === 'hourly' && Number(emp.hours || 0) > 0;
-                        return (
-                          <div
-                            key={emp.id}
-                            className={`grid grid-cols-1 items-center gap-4 border p-5 transition lg:grid-cols-12 ${
-                              highlightedId === emp.id
-                                ? 'border-2 border-amber-700 bg-amber-50/50'
-                                : 'border-stone-300 bg-white'
-                            } ${!emp.active ? 'opacity-65' : ''}`}
-                          >
-                            <div className="min-w-0 lg:col-span-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <strong className="text-base text-[#1C1917]">{emp.name}</strong>
-                                {breakdown.otHours > 0 && (
-                                  <span className="border border-amber-600/40 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
-                                    +{breakdown.otHours.toFixed(2)}h OT
-                                  </span>
-                                )}
-                                <span className="border border-stone-300 bg-[#F6F4EF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
-                                  {emp.department}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-xs text-stone-600">
-                                {emp.role} &bull;{' '}
-                                <span className="inline-flex items-center gap-1 text-stone-500">
-                                  <Briefcase className="h-3 w-3" />
-                                  {emp.accessLevel}
-                                </span>
-                              </p>
-                            </div>
-
-                            <div className="lg:col-span-2">
+                        <div className="lg:col-span-2">
+                          {emp.payType === 'hourly' ? (
+                            <>
                               <label className="block text-[10px] font-bold uppercase text-stone-500">
-                                {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
+                                Shift Hours
                               </label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={emp.rate}
-                                onChange={(e) =>
-                                  setState({
-                                    ...state,
-                                    employees: employees.map((item) =>
-                                      item.id === emp.id
-                                        ? { ...item, rate: parseFloat(e.target.value) || 0 }
-                                        : item
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
-                              />
-                            </div>
-
-                            <div className="lg:col-span-2">
-                              {emp.payType === 'hourly' ? (
-                                <>
-                                  <label className="block text-[10px] font-bold uppercase text-stone-500">
-                                    Shift Hours
-                                  </label>
-                                  <div className="mt-1 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
-                                    <button
-                                      type="button"
-                                      onClick={() => stepEmployeeHours(emp.id, -1)}
-                                      className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
-                                    >
-                                      <Minus className="h-3 w-3" />
-                                    </button>
-                                    <span className="min-w-11 text-center text-xs font-bold">
-                                      {emp.hours}h
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => stepEmployeeHours(emp.id, 1)}
-                                      className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
-                                    >
-                                      <Plus className="h-3 w-3" />
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="pt-4 text-xs font-semibold text-stone-600">
-                                  Per Project
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="lg:col-span-2 lg:text-right">
-                              <span className="block text-[10px] font-bold uppercase text-stone-500">
-                                Period Pay
-                              </span>
-                              <strong className="text-sm font-bold text-rose-700">
-                                -${payout.toFixed(2)}
-                              </strong>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2 lg:col-span-2 lg:justify-end">
-                              {showReset ? (
+                              <div className="mt-1 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
                                 <button
                                   type="button"
-                                  onClick={() => stepEmployeeHours(emp.id, 0)}
-                                  className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2 py-1 text-[10px] font-bold uppercase text-[#1C1917] hover:bg-stone-200"
+                                  onClick={() => stepEmployeeHours(emp.id, -1)}
+                                  className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
                                 >
-                                  Reset Hrs
+                                  <Minus className="h-3 w-3" />
                                 </button>
-                              ) : (
-                                <span className="inline-block w-14" />
-                              )}
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setState({
-                                    ...state,
-                                    employees: employees.map((item) =>
-                                      item.id === emp.id ? { ...item, active: !item.active } : item
-                                    ),
-                                  })
-                                }
-                                className={`cursor-pointer border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${
-                                  emp.active
-                                    ? 'border-amber-700/40 bg-amber-50 text-amber-900'
-                                    : 'border-stone-300 bg-stone-100 text-stone-600'
-                                }`}
-                              >
-                                {emp.active ? 'Active' : 'Off-Cycle'}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setPayStubEmpId(emp.id)}
-                                className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
-                              >
-                                Stub
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setState({
-                                    ...state,
-                                    employees: employees.filter((item) => item.id !== emp.id),
-                                  })
-                                }
-                                className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                                <span className="min-w-11 text-center text-xs font-bold">
+                                  {emp.hours}h
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => stepEmployeeHours(emp.id, 1)}
+                                  className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="pt-4 text-xs font-semibold text-stone-600">
+                              Per Project
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
+                          )}
+                        </div>
+
+                        <div className="lg:col-span-1 lg:text-right">
+                          <span className="block text-[10px] font-bold uppercase text-stone-500">
+                            Pay
+                          </span>
+                          <strong className="text-sm font-bold text-rose-700">
+                            -${payout.toFixed(2)}
+                          </strong>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 lg:col-span-3 lg:justify-end">
+                          <button
+                            type="button"
+                            onClick={() => switchStaffRole('staff', emp)}
+                            className="cursor-pointer border border-amber-700/40 bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase text-amber-950 hover:bg-amber-100"
+                          >
+                            Staff Login
+                          </button>
+
+                          {showReset && (
+                            <button
+                              type="button"
+                              onClick={() => stepEmployeeHours(emp.id, 0)}
+                              className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2 py-1 text-[10px] font-bold uppercase text-[#1C1917] hover:bg-stone-200"
+                            >
+                              Reset
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setState({
+                                ...state,
+                                employees: employees.map((item) =>
+                                  item.id === emp.id ? { ...item, active: !item.active } : item
+                                ),
+                              })
+                            }
+                            className={`cursor-pointer border px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                              emp.active
+                                ? 'border-amber-700/40 bg-amber-50 text-amber-900'
+                                : 'border-stone-300 bg-stone-100 text-stone-600'
+                            }`}
+                          >
+                            {emp.active ? 'Active' : 'Off'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPayStubEmpId(emp.id)}
+                            className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[10px] font-semibold text-[#1C1917] hover:bg-stone-100"
+                          >
+                            Stub
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setState({
+                                ...state,
+                                employees: employees.filter((item) => item.id !== emp.id),
+                              })
+                            }
+                            className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div className="border border-stone-300 bg-white/90 p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3660,7 +3986,7 @@ export default function App() {
                         <th className="py-2.5 px-3">Clock In</th>
                         <th className="py-2.5 px-3">Clock Out</th>
                         <th className="py-2.5 px-3">Hours</th>
-                        {!isStaffView && <th className="py-2.5 px-3">Pay</th>}
+                        <th className="py-2.5 px-3">Pay</th>
                         <th className="py-2.5 px-3">Note</th>
                         <th className="py-2.5 px-3 text-right">Action</th>
                       </tr>
@@ -3673,11 +3999,9 @@ export default function App() {
                           <td className="py-2.5 px-3">{log.clockIn}</td>
                           <td className="py-2.5 px-3">{log.clockOut}</td>
                           <td className="py-2.5 px-3 font-bold">{Number(log.hours).toFixed(2)}h</td>
-                          {!isStaffView && (
-                            <td className="py-2.5 px-3 font-semibold text-rose-700">
-                              -${Number(log.earned || 0).toFixed(2)}
-                            </td>
-                          )}
+                          <td className="py-2.5 px-3 font-semibold text-rose-700">
+                            -${Number(log.earned || 0).toFixed(2)}
+                          </td>
                           <td className="py-2.5 px-3 text-stone-600">{log.note}</td>
                           <td className="py-2.5 px-3 text-right">
                             <button
@@ -3698,7 +4022,318 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 3: ORDERS, FULFILLMENT & PACKING SLIPS */}
+          {/* TAB 3: DEDICATED STAFF PORTAL (SIGN-IN, TIME CLOCK, PAY SUMMARY & SOPS) */}
+          {effectiveCfoTab === 'staff_portal' && (
+            <div className="grid gap-6 lg:grid-cols-12">
+              <div className="space-y-6 lg:col-span-5">
+                <div className="border border-stone-300 bg-white/95 p-6">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                    Staff Portal Authentication
+                  </span>
+                  <h2 className="mt-1 font-serif text-xl font-normal text-[#1C1917]">
+                    Team Sign-In &amp; Active Session
+                  </h2>
+
+                  <div className="mt-3 border border-stone-200 bg-[#F6F4EF] p-3 text-xs">
+                    <p className="text-stone-600">
+                      Signed in as: <strong>{activeStaffMember?.name || 'None'}</strong> (
+                      {activeStaffMember?.accessLevel || 'Standard'})
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {employees.map((emp) => (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          onClick={() => {
+                            setStaffLoginError('');
+                            setState((prev) => ({
+                              ...prev,
+                              activeStaffId: emp.id,
+                              staffRole: 'staff',
+                              staffSignedInName: `${emp.name} (${emp.role})`,
+                            }));
+                          }}
+                          className={`cursor-pointer border px-2.5 py-1 text-[11px] font-semibold ${
+                            activeStaffMember?.id === emp.id
+                              ? 'border-[#1C1917] bg-[#1C1917] text-[#F6F4EF]'
+                              : 'border-stone-300 bg-white text-stone-700 hover:border-[#1C1917]'
+                          }`}
+                        >
+                          {emp.name} (PIN {emp.pin || '1000'})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleStaffPortalSignIn} className="mt-4 space-y-3 text-xs">
+                    <div>
+                      <label className="block font-bold uppercase text-stone-500">
+                        Staff Email or Name
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="maya@majorstylejunction.demo"
+                        value={staffLoginForm.identifier}
+                        onChange={(e) =>
+                          setStaffLoginForm({ ...staffLoginForm, identifier: e.target.value })
+                        }
+                        className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold uppercase text-stone-500">
+                        Staff Access PIN
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="e.g. 1001"
+                        value={staffLoginForm.pin}
+                        onChange={(e) =>
+                          setStaffLoginForm({ ...staffLoginForm, pin: e.target.value })
+                        }
+                        className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-3 py-2"
+                      />
+                    </div>
+                    {staffLoginError && (
+                      <p className="font-semibold text-rose-700">{staffLoginError}</p>
+                    )}
+                    <button
+                      type="submit"
+                      className="inline-flex w-full cursor-pointer items-center justify-center gap-1.5 bg-[#1C1917] py-2.5 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      Sign In with Staff PIN
+                    </button>
+                  </form>
+                </div>
+
+                {activeStaffMember && (
+                  <div className="border border-stone-300 bg-white/95 p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          My Shift &amp; Pay Card
+                        </span>
+                        <h3 className="font-serif text-lg text-[#1C1917]">
+                          {activeStaffMember.name}
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleStaffClockToggle}
+                        className={`inline-flex cursor-pointer items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-wider text-white ${
+                          activeStaffMember.clockedInAt
+                            ? 'bg-rose-700 hover:bg-rose-800'
+                            : 'bg-amber-800 hover:bg-amber-900'
+                        }`}
+                      >
+                        {activeStaffMember.clockedInAt ? (
+                          <>
+                            <Square className="h-3.5 w-3.5" />
+                            <span>Clock Out</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-3.5 w-3.5" />
+                            <span>Clock In</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3 border-t border-stone-200 pt-4 text-xs">
+                      <div className="border border-stone-200 bg-[#F6F4EF] p-3">
+                        <span className="block text-[10px] font-bold uppercase text-stone-500">
+                          Clock Status
+                        </span>
+                        <strong className="mt-1 block text-sm text-[#1C1917]">
+                          {activeStaffMember.clockedInAt
+                            ? `In since ${activeStaffMember.clockedInAt}`
+                            : 'Off Clock'}
+                        </strong>
+                      </div>
+                      <div className="border border-stone-200 bg-[#F6F4EF] p-3">
+                        <span className="block text-[10px] font-bold uppercase text-stone-500">
+                          Logged Hours
+                        </span>
+                        <strong className="mt-1 block text-sm text-[#1C1917]">
+                          {activeStaffMember.payType === 'hourly'
+                            ? `${activeStaffMember.hours} hrs`
+                            : 'Flat Stipend'}
+                        </strong>
+                      </div>
+                      <div className="border border-stone-200 bg-[#F6F4EF] p-3">
+                        <span className="block text-[10px] font-bold uppercase text-stone-500">
+                          Pay Rate
+                        </span>
+                        <strong className="mt-1 block text-sm text-[#1C1917]">
+                          ${Number(activeStaffMember.rate || 0).toFixed(2)}
+                          {activeStaffMember.payType === 'hourly' ? '/hr' : ' flat'}
+                        </strong>
+                      </div>
+                      <div className="border border-stone-200 bg-[#F6F4EF] p-3">
+                        <span className="block text-[10px] font-bold uppercase text-stone-500">
+                          Est. Period Pay
+                        </span>
+                        <strong className="mt-1 block text-sm text-amber-800">
+                          ${getEmployeePayout(activeStaffMember).toFixed(2)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 border-t border-stone-200 pt-3 text-xs">
+                      <label className="block font-bold uppercase text-stone-500">
+                        My Shift Hand-Off / Task Note
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={staffNoteDraft}
+                        onChange={(e) => setStaffNoteDraft(e.target.value)}
+                        className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] p-2"
+                      />
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setState((prev) => ({
+                              ...prev,
+                              employees: (prev.employees || []).map((emp) =>
+                                emp.id === activeStaffMember.id
+                                  ? { ...emp, assignedNotes: staffNoteDraft }
+                                  : emp
+                              ),
+                            }));
+                            showToast(`Saved shift note for ${activeStaffMember.name}.`);
+                          }}
+                          className="cursor-pointer bg-[#1C1917] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#F6F4EF]"
+                        >
+                          Save Shift Note
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openShiftCorrectionModal(null)}
+                          className="cursor-pointer border border-stone-300 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#1C1917]"
+                        >
+                          Report Missed Clock-Out
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-6 lg:col-span-7">
+                <div className="border border-stone-300 bg-white/95 p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                        Important Team Playbook
+                      </span>
+                      <h3 className="font-serif text-xl font-normal text-[#1C1917]">
+                        Staff SOPs, Announcements &amp; Checklists
+                      </h3>
+                    </div>
+                    <span className="inline-flex items-center gap-1 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-[11px] font-semibold text-stone-700">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-800" />
+                      Orders: {activePermissions.canManageOrders ? 'Enabled' : 'View Only'} &bull; Stock:{' '}
+                      {activePermissions.canManageInventory ? 'Enabled' : 'View Only'}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {staffResources.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="border border-stone-200 bg-[#F6F4EF] p-4 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-amber-800" />
+                            <strong className="text-sm text-[#1C1917]">{doc.title}</strong>
+                          </div>
+                          <span className="border border-stone-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase text-stone-600">
+                            {doc.category} &bull; {doc.updated}
+                          </span>
+                        </div>
+                        <p className="mt-2 leading-relaxed text-stone-700">{doc.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {!isStaffView && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!newResourceForm.title.trim() || !newResourceForm.summary.trim()) return;
+                        setState((prev) => ({
+                          ...prev,
+                          staffResources: [
+                            {
+                              id: `doc-${Date.now()}`,
+                              title: newResourceForm.title.trim(),
+                              category: newResourceForm.category,
+                              summary: newResourceForm.summary.trim(),
+                              updated: new Date().toISOString().slice(0, 10),
+                            },
+                            ...(prev.staffResources || []),
+                          ],
+                        }));
+                        setNewResourceForm({ title: '', category: 'Operations', summary: '' });
+                        showToast('Published new SOP / memo to the Staff Portal.');
+                      }}
+                      className="mt-5 space-y-2.5 border-t border-stone-200 pt-4 text-xs"
+                    >
+                      <strong className="block text-sm">Publish New SOP or Memo to Staff Portal</strong>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <input
+                          type="text"
+                          required
+                          placeholder="SOP / Memo Title"
+                          value={newResourceForm.title}
+                          onChange={(e) =>
+                            setNewResourceForm({ ...newResourceForm, title: e.target.value })
+                          }
+                          className="border border-stone-300 bg-white px-3 py-2 sm:col-span-2"
+                        />
+                        <select
+                          value={newResourceForm.category}
+                          onChange={(e) =>
+                            setNewResourceForm({ ...newResourceForm, category: e.target.value })
+                          }
+                          className="border border-stone-300 bg-white px-2.5 py-2 font-semibold"
+                        >
+                          <option>Operations</option>
+                          <option>Production</option>
+                          <option>Fulfillment</option>
+                          <option>HR &amp; Payroll</option>
+                        </select>
+                      </div>
+                      <textarea
+                        rows={2}
+                        required
+                        placeholder="Key steps, press settings, or daily shift reminder..."
+                        value={newResourceForm.summary}
+                        onChange={(e) =>
+                          setNewResourceForm({ ...newResourceForm, summary: e.target.value })
+                        }
+                        className="w-full border border-stone-300 bg-white p-2.5"
+                      />
+                      <button
+                        type="submit"
+                        className="cursor-pointer bg-[#1C1917] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+                      >
+                        Post to Staff Portal
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: ORDERS, FULFILLMENT & PACKING SLIPS */}
           {effectiveCfoTab === 'orders' && (
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3875,7 +4510,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 4: INVENTORY, PRODUCT IMAGE UPLOADS & SKU MARGINS */}
+          {/* TAB 5: INVENTORY, PRODUCT IMAGE UPLOADS & SKU MARGINS */}
           {effectiveCfoTab === 'inventory' && (
             <div className="space-y-6">
               <div className="border border-stone-300 bg-white/90 p-6">
@@ -4249,7 +4884,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 5: EXPENSES & OVERHEAD LEDGER */}
+          {/* TAB 6: EXPENSES & OVERHEAD LEDGER */}
           {!isStaffView && effectiveCfoTab === 'expenses' && (
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="border border-stone-300 bg-white/90 p-6 lg:col-span-8">
@@ -4377,7 +5012,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 6: PROMO CODES & DISCOUNTS */}
+          {/* TAB 7: PROMO CODES & DISCOUNTS */}
           {!isStaffView && effectiveCfoTab === 'promos' && (
             <div className="max-w-2xl space-y-6">
               <form
@@ -4702,7 +5337,6 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* ACCOUNT TAB 1: ORDER HISTORY, SELF-SERVICE ADDRESS EDIT, CANCEL & REORDER */}
                 {accountSubTab === 'orders' && (
                   <div className="space-y-3 text-xs">
                     {activeCustomerOrders.length === 0 ? (
@@ -4795,15 +5429,7 @@ export default function App() {
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    (ord.items || []).forEach((it) => {
-                                      const prod = state.products.find((p) => p.id === it.id);
-                                      if (prod && Number(prod.sizeStock?.[it.size] || 0) > 0) {
-                                        addItemToCart(prod, it.size);
-                                      }
-                                    });
-                                    setAccountModalOpen(false);
-                                  }}
+                                  onClick={() => handleReorderItems(ord.items)}
                                   className="inline-flex cursor-pointer items-center gap-1 border border-[#1C1917] bg-white px-2.5 py-1 font-semibold text-[#1C1917] hover:bg-stone-100"
                                 >
                                   <RefreshCw className="h-3 w-3" />
@@ -4818,7 +5444,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ACCOUNT TAB 2: SAVED ITEMS WISHLIST */}
                 {accountSubTab === 'saved' && (
                   <div className="space-y-3 text-xs">
                     {savedProducts.length === 0 ? (
@@ -4863,7 +5488,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ACCOUNT TAB 3: ADDRESS BOOK & PREFERRED SIZE */}
                 {accountSubTab === 'addresses' && (
                   <div className="space-y-4 text-xs">
                     <div className="border border-stone-300 bg-white p-4">
@@ -4966,7 +5590,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ACCOUNT TAB 4: PROFILE & ACTIVE PROMO PERKS */}
                 {accountSubTab === 'profile' && (
                   <div className="space-y-4 text-xs">
                     <div className="border border-stone-300 bg-white p-4">
