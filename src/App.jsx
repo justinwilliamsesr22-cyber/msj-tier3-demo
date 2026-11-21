@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ShoppingBag,
   BarChart3,
@@ -18,9 +18,17 @@ import {
   Sliders,
   Upload,
   Image as ImageIcon,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Package,
+  Receipt,
+  Tag,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'msj_tier3_demo_v1';
+const ITEMS_PER_PAGE = 6;
 
 const INITIAL_DATA = {
   products: [
@@ -31,6 +39,7 @@ const INITIAL_DATA = {
       price: 78,
       unitCost: 24,
       badge: 'Flagship Drop',
+      description: '480 GSM brushed cotton fleece pullover hoodie with double-lined hood.',
       image: '',
       sizeStock: { S: 6, M: 12, L: 14, XL: 8, '2XL': 4 },
     },
@@ -41,6 +50,7 @@ const INITIAL_DATA = {
       price: 42,
       unitCost: 11.5,
       badge: 'Best Seller',
+      description: '280 GSM pigment-dyed combed cotton boxy t-shirt with puff print.',
       image: '',
       sizeStock: { S: 10, M: 18, L: 15, XL: 9, '2XL': 5 },
     },
@@ -51,8 +61,42 @@ const INITIAL_DATA = {
       price: 92,
       unitCost: 28,
       badge: 'Limited Run',
+      description: 'Ripstop cotton-nylon articulated cargo trousers with adjustable ankle toggles.',
       image: '',
       sizeStock: { S: 4, M: 7, L: 8, XL: 5, '2XL': 2 },
+    },
+    {
+      id: 'sg-4',
+      name: 'Harrisburg Heritage Quilted Work Jacket',
+      category: 'Outerwear',
+      price: 128,
+      unitCost: 41,
+      badge: 'Winter Capsule',
+      description: 'Heavy canvas chore coat with diamond-quilted insulated lining and brass hardware.',
+      image: '',
+      sizeStock: { S: 3, M: 6, L: 7, XL: 4, '2XL': 2 },
+    },
+    {
+      id: 'sg-5',
+      name: 'Garment-Dyed Thermal Waffle Long Sleeve',
+      category: 'Tees',
+      price: 54,
+      unitCost: 15.5,
+      badge: 'Core Essential',
+      description: 'Midweight textured waffle-knit crewneck shirt built for layering.',
+      image: '',
+      sizeStock: { S: 8, M: 11, L: 9, XL: 6, '2XL': 3 },
+    },
+    {
+      id: 'sg-6',
+      name: 'Brushed Loopback Sweatpant',
+      category: 'Bottoms',
+      price: 72,
+      unitCost: 21,
+      badge: 'Restocked',
+      description: 'Relaxed straight-leg French terry sweatpants with deep welt pockets.',
+      image: '',
+      sizeStock: { S: 5, M: 9, L: 10, XL: 5, '2XL': 2 },
     },
   ],
   orders: [
@@ -252,7 +296,7 @@ function compressImageFile(file, maxDimension = 900) {
 }
 
 export default function App() {
-  const [mode, setMode] = useState('cfo');
+  const [mode, setMode] = useState('store');
   const [cfoTab, setCfoTab] = useState('pnl');
   const [storageWarning, setStorageWarning] = useState('');
   const [state, setState] = useState(() => {
@@ -264,7 +308,7 @@ export default function App() {
         ...INITIAL_DATA,
         ...parsed,
         products: Array.isArray(parsed.products)
-          ? parsed.products.map((p) => ({ image: '', ...p }))
+          ? parsed.products.map((p) => ({ image: '', description: '', ...p }))
           : INITIAL_DATA.products,
         employees: Array.isArray(parsed.employees) ? parsed.employees : INITIAL_DATA.employees,
         promos: Array.isArray(parsed.promos) ? parsed.promos : INITIAL_DATA.promos,
@@ -293,7 +337,34 @@ export default function App() {
     }
   }, [state]);
 
-  // Storefront state
+  // Refs for Ctrl+K / Quick Search Focus
+  const adminSearchRef = useRef(null);
+  const storeSearchRef = useRef(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (mode === 'cfo') {
+          adminSearchRef.current?.focus();
+        } else {
+          storeSearchRef.current?.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mode]);
+
+  // Storefront Catalog Discovery, Search, Filter, Sort & Pagination State
+  const [storeSearch, setStoreSearch] = useState('');
+  const [storeCategory, setStoreCategory] = useState('All');
+  const [storeSizeFilter, setStoreSizeFilter] = useState('All');
+  const [storeInStockOnly, setStoreInStockOnly] = useState(false);
+  const [storeSort, setStoreSort] = useState('featured');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Storefront Quick-View & Cart State
   const [selectedProd, setSelectedProd] = useState(null);
   const [selectedSize, setSelectedSize] = useState('L');
   const [cart, setCart] = useState([]);
@@ -304,8 +375,15 @@ export default function App() {
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
   const [orderBanner, setOrderBanner] = useState('');
 
-  // Admin & CFO state
+  // Admin & CFO Universal Search + Tab Filters
+  const [adminGlobalSearch, setAdminGlobalSearch] = useState('');
+  const [adminSearchOpen, setAdminSearchOpen] = useState(false);
+  const [highlightedId, setHighlightedId] = useState('');
   const [orderFilter, setOrderFilter] = useState('All');
+  const [orderSearch, setOrderSearch] = useState('');
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryCatFilter, setInventoryCatFilter] = useState('All');
   const [slipOrder, setSlipOrder] = useState(null);
   const [payStubEmp, setPayStubEmp] = useState(null);
 
@@ -334,6 +412,7 @@ export default function App() {
     name: '',
     category: 'Hoodies',
     badge: 'Capsule Drop',
+    description: '',
     price: '68',
     unitCost: '21',
     image: '',
@@ -356,6 +435,26 @@ export default function App() {
     setAppliedPromo(null);
     setOrderBanner('');
     setStorageWarning('');
+    setStoreSearch('');
+    setStoreCategory('All');
+    setStoreSizeFilter('All');
+    setStoreInStockOnly(false);
+    setStoreSort('featured');
+    setCurrentPage(1);
+    setAdminGlobalSearch('');
+    setOrderSearch('');
+    setEmployeeSearch('');
+    setInventorySearch('');
+    setHighlightedId('');
+  };
+
+  const resetStoreFilters = () => {
+    setStoreSearch('');
+    setStoreCategory('All');
+    setStoreSizeFilter('All');
+    setStoreInStockOnly(false);
+    setStoreSort('featured');
+    setCurrentPage(1);
   };
 
   const handleExistingProductImageUpload = async (productId, file) => {
@@ -395,6 +494,188 @@ export default function App() {
 
   const totalUnitsForProduct = (prod) =>
     Object.values(prod.sizeStock || {}).reduce((a, b) => a + Number(b || 0), 0);
+
+  // Dynamic Catalog Categories
+  const catalogCategories = useMemo(() => {
+    const unique = Array.from(new Set(state.products.map((p) => p.category).filter(Boolean)));
+    return ['All', ...unique];
+  }, [state.products]);
+
+  // Filtered & Sorted Storefront Products
+  const filteredStoreProducts = useMemo(() => {
+    const query = storeSearch.trim().toLowerCase();
+    const list = state.products.filter((prod) => {
+      if (storeCategory !== 'All' && prod.category !== storeCategory) return false;
+      if (storeSizeFilter !== 'All' && Number(prod.sizeStock?.[storeSizeFilter] || 0) <= 0) {
+        return false;
+      }
+      if (storeInStockOnly && totalUnitsForProduct(prod) <= 0) return false;
+      if (query) {
+        const availableSizes = Object.entries(prod.sizeStock || {})
+          .filter(([, qty]) => Number(qty) > 0)
+          .map(([sz]) => sz.toLowerCase())
+          .join(' ');
+        const hay = `${prod.name} ${prod.category} ${prod.badge || ''} ${
+          prod.description || ''
+        } ${availableSizes}`.toLowerCase();
+        if (!hay.includes(query)) return false;
+      }
+      return true;
+    });
+
+    if (storeSort === 'price-asc') {
+      return [...list].sort((a, b) => Number(a.price) - Number(b.price));
+    }
+    if (storeSort === 'price-desc') {
+      return [...list].sort((a, b) => Number(b.price) - Number(a.price));
+    }
+    if (storeSort === 'newest') {
+      return [...list].reverse();
+    }
+    if (storeSort === 'stock-desc') {
+      return [...list].sort((a, b) => totalUnitsForProduct(b) - totalUnitsForProduct(a));
+    }
+    return list;
+  }, [state.products, storeSearch, storeCategory, storeSizeFilter, storeInStockOnly, storeSort]);
+
+  const hasActiveStoreFilters =
+    storeSearch.trim() !== '' ||
+    storeCategory !== 'All' ||
+    storeSizeFilter !== 'All' ||
+    storeInStockOnly ||
+    storeSort !== 'featured';
+
+  const totalPages = Math.max(1, Math.ceil(filteredStoreProducts.length / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedStoreProducts = useMemo(() => {
+    const startIdx = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
+    return filteredStoreProducts.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+  }, [filteredStoreProducts, safeCurrentPage]);
+
+  const showEditorialSpotlight = !hasActiveStoreFilters && safeCurrentPage === 1;
+  const spotlightFeatured = showEditorialSpotlight ? paginatedStoreProducts[0] : null;
+  const spotlightCompanion = showEditorialSpotlight ? paginatedStoreProducts.slice(1, 3) : [];
+  const gridProducts = showEditorialSpotlight
+    ? paginatedStoreProducts.slice(3)
+    : paginatedStoreProducts;
+
+  const openQuickView = (prod, preferredSize = null) => {
+    const sizes = ['S', 'M', 'L', 'XL', '2XL'];
+    let targetSize = preferredSize;
+    if (!targetSize || Number(prod.sizeStock?.[targetSize] || 0) <= 0) {
+      if (storeSizeFilter !== 'All' && Number(prod.sizeStock?.[storeSizeFilter] || 0) > 0) {
+        targetSize = storeSizeFilter;
+      } else {
+        targetSize = sizes.find((sz) => Number(prod.sizeStock?.[sz] || 0) > 0) || 'L';
+      }
+    }
+    setSelectedSize(targetSize);
+    setSelectedProd(prod);
+  };
+
+  // Universal Admin Omnisearch (Searches Storefront Products, Orders, Team, Expenses, Promos, P&L)
+  const adminOmnisearchResults = useMemo(() => {
+    const q = adminGlobalSearch.trim().toLowerCase();
+    if (!q) {
+      return {
+        total: 0,
+        products: [],
+        orders: [],
+        employees: [],
+        expenses: [],
+        promos: [],
+        adjustments: [],
+      };
+    }
+
+    const matchedProducts = state.products.filter((p) =>
+      `${p.id} ${p.name} ${p.category} ${p.badge || ''} ${p.description || ''} $${p.price}`
+        .toLowerCase()
+        .includes(q)
+    );
+
+    const matchedOrders = state.orders.filter((o) => {
+      const itemsText = (o.items || []).map((i) => `${i.name} ${i.size}`).join(' ');
+      return `${o.id} ${o.customerName} ${o.customerEmail} ${o.address} ${o.carrier || ''} ${
+        o.tracking || ''
+      } ${o.fulfillmentStatus || ''} ${itemsText}`
+        .toLowerCase()
+        .includes(q);
+    });
+
+    const matchedEmployees = employees.filter((e) =>
+      `${e.name} ${e.role} ${e.department} ${e.accessLevel} ${e.payType} ${
+        e.active ? 'active' : 'off-cycle'
+      }`
+        .toLowerCase()
+        .includes(q)
+    );
+
+    const matchedExpenses = state.expenses.filter((ex) =>
+      `${ex.date} ${ex.category} ${ex.vendor} $${ex.amount}`.toLowerCase().includes(q)
+    );
+
+    const matchedPromos = promos.filter((pr) =>
+      `${pr.code} ${pr.type} ${pr.value} ${pr.active ? 'active' : 'paused'}`
+        .toLowerCase()
+        .includes(q)
+    );
+
+    const matchedAdjustments = state.pnlAdjustments.filter((adj) =>
+      `${adj.date} ${adj.type} ${adj.title} $${adj.amount}`.toLowerCase().includes(q)
+    );
+
+    return {
+      total:
+        matchedProducts.length +
+        matchedOrders.length +
+        matchedEmployees.length +
+        matchedExpenses.length +
+        matchedPromos.length +
+        matchedAdjustments.length,
+      products: matchedProducts,
+      orders: matchedOrders,
+      employees: matchedEmployees,
+      expenses: matchedExpenses,
+      promos: matchedPromos,
+      adjustments: matchedAdjustments,
+    };
+  }, [adminGlobalSearch, state.products, state.orders, employees, state.expenses, promos, state.pnlAdjustments]);
+
+  const jumpToAdminRecord = (tab, id, extraFilterReset = {}) => {
+    setCfoTab(tab);
+    setHighlightedId(id);
+    setAdminSearchOpen(false);
+    if (extraFilterReset.inventorySearch !== undefined) {
+      setInventorySearch(extraFilterReset.inventorySearch);
+      setInventoryCatFilter('All');
+    }
+    if (extraFilterReset.orderSearch !== undefined) {
+      setOrderSearch(extraFilterReset.orderSearch);
+      setOrderFilter('All');
+    }
+    if (extraFilterReset.employeeSearch !== undefined) {
+      setEmployeeSearch(extraFilterReset.employeeSearch);
+    }
+  };
+
+  const jumpToStoreProduct = (productName) => {
+    setAdminSearchOpen(false);
+    setMode('store');
+    setStoreCategory('All');
+    setStoreSizeFilter('All');
+    setStoreInStockOnly(false);
+    setStoreSort('featured');
+    setStoreSearch(productName);
+    setCurrentPage(1);
+  };
 
   // Financial & P&L Calculations
   const onlineMerch = state.orders.reduce((s, o) => s + Number(o.subtotal || 0), 0);
@@ -591,8 +872,6 @@ export default function App() {
     );
   };
 
-  const featuredProduct = state.products[0];
-  const secondaryProducts = state.products.slice(1);
   const activeEmployeeCount = employees.filter((e) => e.active).length;
   const totalLoggedHours = employees
     .filter((e) => e.active && e.payType === 'hourly')
@@ -601,18 +880,54 @@ export default function App() {
     (o) => (o.fulfillmentStatus || 'Unfulfilled') === 'Unfulfilled'
   ).length;
 
-  const filteredOrders =
-    orderFilter === 'All'
-      ? state.orders
-      : state.orders.filter(
-          (o) => (o.fulfillmentStatus || 'Unfulfilled') === orderFilter
-        );
+  const filteredOrders = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase();
+    return state.orders.filter((o) => {
+      if (orderFilter !== 'All' && (o.fulfillmentStatus || 'Unfulfilled') !== orderFilter) {
+        return false;
+      }
+      if (q) {
+        const itemsText = (o.items || []).map((i) => i.name).join(' ');
+        const hay = `${o.id} ${o.customerName} ${o.customerEmail} ${o.address} ${o.carrier || ''} ${
+          o.tracking || ''
+        } ${itemsText}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [state.orders, orderFilter, orderSearch]);
 
-  const skuLeaderboard = [...state.products].sort((a, b) => {
-    const mA = a.price > 0 ? (a.price - a.unitCost) / a.price : 0;
-    const mB = b.price > 0 ? (b.price - b.unitCost) / b.price : 0;
-    return mB - mA;
-  });
+  const filteredEmployees = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return employees;
+    return employees.filter((emp) =>
+      `${emp.name} ${emp.role} ${emp.department} ${emp.accessLevel} ${emp.payType}`
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [employees, employeeSearch]);
+
+  const skuLeaderboard = useMemo(() => {
+    const q = inventorySearch.trim().toLowerCase();
+    return [...state.products]
+      .filter((p) => {
+        if (inventoryCatFilter !== 'All' && p.category !== inventoryCatFilter) return false;
+        if (
+          q &&
+          !`${p.name} ${p.category} ${p.badge || ''} ${p.description || ''}`
+            .toLowerCase()
+            .includes(q)
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const mA = a.price > 0 ? (a.price - a.unitCost) / a.price : 0;
+        const mB = b.price > 0 ? (b.price - b.unitCost) / b.price : 0;
+        return mB - mA;
+      });
+  }, [state.products, inventorySearch, inventoryCatFilter]);
 
   const expenseByCategory = state.expenses.reduce((acc, exp) => {
     acc[exp.category] = (acc[exp.category] || 0) + Number(exp.amount || 0);
@@ -686,7 +1001,7 @@ export default function App() {
       {mode === 'store' ? (
         <>
           <header className="border-b border-stone-300 bg-[#F6F4EF]">
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-800">
                   Harrisburg &bull; Limited Capsule
@@ -695,20 +1010,52 @@ export default function App() {
                   Susquehanna Goods
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setCartOpen(true)}
-                className="inline-flex cursor-pointer items-center gap-2 border border-[#1C1917] bg-[#1C1917] px-4 py-2 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] transition hover:border-amber-800 hover:bg-amber-800"
-              >
-                <ShoppingBag className="h-3.5 w-3.5" />
-                <span>Bag ({cart.reduce((s, i) => s + i.qty, 0)})</span>
-              </button>
+
+              {/* Header Customer Search + Bag Button */}
+              <div className="flex flex-1 items-center justify-end gap-3 sm:max-w-md">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
+                  <input
+                    ref={storeSearchRef}
+                    type="text"
+                    value={storeSearch}
+                    onChange={(e) => {
+                      setStoreSearch(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    placeholder="Search clothes, hoodies, tees, sizes... (Ctrl+K)"
+                    className="w-full border border-stone-300 bg-white py-2 pl-9 pr-7 text-xs text-[#1C1917] placeholder-stone-500 focus:border-[#1C1917] focus:outline-none"
+                  />
+                  {storeSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStoreSearch('');
+                        setCurrentPage(1);
+                      }}
+                      aria-label="Clear header search"
+                      className="absolute right-2 top-2 cursor-pointer text-stone-500 hover:text-[#1C1917]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCartOpen(true)}
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-2 border border-[#1C1917] bg-[#1C1917] px-4 py-2 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] transition hover:border-amber-800 hover:bg-amber-800"
+                >
+                  <ShoppingBag className="h-3.5 w-3.5" />
+                  <span>Bag ({cart.reduce((s, i) => s + i.qty, 0)})</span>
+                </button>
+              </div>
             </div>
           </header>
 
           <main className="mx-auto max-w-6xl px-6 py-12">
             {/* Editorial Split Hero */}
-            <div className="grid gap-8 border-b border-stone-300 pb-12 lg:grid-cols-12 lg:items-end">
+            <div className="grid gap-8 border-b border-stone-300 pb-10 lg:grid-cols-12 lg:items-end">
               <div className="lg:col-span-7">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-800">
                   Autumn / Winter Study &mdash; Tier 03 Architecture
@@ -719,130 +1066,483 @@ export default function App() {
               </div>
               <div className="border-l border-stone-400 pl-6 lg:col-span-5">
                 <p className="text-sm leading-relaxed text-stone-700">
-                  Add items to the bag, apply promo code <strong>WELCOME10</strong>, and place a test order—or open{' '}
-                  <strong>Behind the Scenes (CFO Suite)</strong> to upload product photos, manage team payroll, and inspect live net profit.
+                  Search any garment, filter by category or available size, and sort across the full catalog below—or switch to{' '}
+                  <strong>Behind the Scenes (CFO Suite)</strong> to search across the entire store, orders, team, and ledger.
                 </p>
               </div>
             </div>
 
-            {/* Asymmetric Showcase */}
-            <div className="mt-12 grid gap-8 lg:grid-cols-12">
-              {featuredProduct && (
-                <article className="flex flex-col justify-between border border-stone-300 bg-[#EFECE4] p-7 lg:col-span-6">
-                  <div>
-                    <div className="flex items-center justify-between border-b border-stone-300 pb-4 text-xs uppercase tracking-widest text-stone-600">
-                      <span>01 &bull; {featuredProduct.badge}</span>
-                      <span>{totalUnitsForProduct(featuredProduct)} units</span>
-                    </div>
+            {/* CATALOG SEARCH, FILTER & SORT CONTROLS */}
+            <section
+              id="store-catalog"
+              aria-label="Catalog Filters and Search"
+              className="mt-8 border border-stone-300 bg-[#EFECE4] p-5"
+            >
+              <div className="grid gap-3 md:grid-cols-12 md:items-center">
+                {/* Search Input */}
+                <div className="relative md:col-span-5">
+                  <Search className="pointer-events-none absolute left-3.5 top-2.5 h-4 w-4 text-stone-500" />
+                  <input
+                    type="text"
+                    value={storeSearch}
+                    onChange={(e) => {
+                      setStoreSearch(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    placeholder="Search garments, fabrics, categories, sizes..."
+                    className="w-full border border-stone-300 bg-white py-2 pl-10 pr-8 text-xs text-[#1C1917] placeholder-stone-500 focus:border-[#1C1917] focus:outline-none"
+                  />
+                  {storeSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStoreSearch('');
+                        setCurrentPage(1);
+                      }}
+                      aria-label="Clear search"
+                      className="absolute right-2.5 top-2.5 cursor-pointer text-stone-500 hover:text-[#1C1917]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
 
-                    {featuredProduct.image ? (
-                      <div className="my-6 h-64 w-full overflow-hidden border border-stone-300 bg-white">
-                        <img
-                          src={featuredProduct.image}
-                          alt={featuredProduct.name}
-                          className="h-full w-full object-cover object-center transition duration-300 hover:scale-105"
-                        />
-                      </div>
-                    ) : (
-                      <div className="my-8 flex h-52 items-center justify-center border border-stone-300 bg-[#F6F4EF] px-6 text-center">
-                        <div>
-                          <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800">
-                            {featuredProduct.category}
-                          </p>
-                          <p className="mt-2 font-serif text-2xl text-[#1C1917]">
-                            {featuredProduct.name}
-                          </p>
-                        </div>
-                      </div>
-                    )}
+                {/* Sort Selector */}
+                <div className="md:col-span-4">
+                  <select
+                    value={storeSort}
+                    onChange={(e) => {
+                      setStoreSort(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    aria-label="Sort catalog"
+                    className="w-full border border-stone-300 bg-white px-3 py-2 text-xs font-semibold text-[#1C1917] focus:border-[#1C1917] focus:outline-none"
+                  >
+                    <option value="featured">Sort: Featured Curated Order</option>
+                    <option value="newest">Sort: Newest Additions First</option>
+                    <option value="price-asc">Sort: Price (Low to High)</option>
+                    <option value="price-desc">Sort: Price (High to Low)</option>
+                    <option value="stock-desc">Sort: Highest Availability</option>
+                  </select>
+                </div>
 
-                    <div className="flex items-baseline justify-between">
-                      <h2 className="font-serif text-xl text-[#1C1917]">
-                        {featuredProduct.name}
-                      </h2>
-                      <span className="text-lg font-semibold text-[#1C1917]">
-                        ${Number(featuredProduct.price).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-
+                {/* In-Stock Toggle */}
+                <div className="md:col-span-3">
                   <button
                     type="button"
-                    disabled={totalUnitsForProduct(featuredProduct) === 0}
                     onClick={() => {
-                      const firstAvail =
-                        ['S', 'M', 'L', 'XL', '2XL'].find(
-                          (sz) => Number(featuredProduct.sizeStock?.[sz] || 0) > 0
-                        ) || 'L';
-                      setSelectedSize(firstAvail);
-                      setSelectedProd(featuredProduct);
+                      setStoreInStockOnly((prev) => !prev);
+                      setCurrentPage(1);
                     }}
-                    className="mt-6 w-full cursor-pointer border border-[#1C1917] bg-[#1C1917] py-3 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] transition hover:border-amber-800 hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    className={`w-full cursor-pointer border px-3 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+                      storeInStockOnly
+                        ? 'border-[#1C1917] bg-[#1C1917] text-[#F6F4EF]'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-500'
+                    }`}
                   >
-                    {totalUnitsForProduct(featuredProduct) === 0
-                      ? 'Sold Out'
-                      : 'Select Size & Add'}
+                    {storeInStockOnly ? 'In Stock Only: ON' : 'In Stock Only: OFF'}
                   </button>
-                </article>
-              )}
+                </div>
+              </div>
 
-              <div className="flex flex-col justify-between gap-6 lg:col-span-6">
-                {secondaryProducts.map((prod, idx) => {
-                  const units = totalUnitsForProduct(prod);
-                  return (
-                    <article
-                      key={prod.id}
-                      className="flex flex-1 flex-col justify-between border border-stone-300 bg-white/70 p-6"
+              {/* Category & Size Filter Pills */}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-stone-300 pt-4">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-stone-500">
+                    Category:
+                  </span>
+                  {catalogCategories.map((cat) => {
+                    const count =
+                      cat === 'All'
+                        ? state.products.length
+                        : state.products.filter((p) => p.category === cat).length;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => {
+                          setStoreCategory(cat);
+                          setCurrentPage(1);
+                        }}
+                        className={`cursor-pointer border px-3 py-1 text-xs font-semibold transition ${
+                          storeCategory === cat
+                            ? 'border-[#1C1917] bg-[#1C1917] text-[#F6F4EF]'
+                            : 'border-stone-300 bg-white text-stone-700 hover:border-stone-500'
+                        }`}
+                      >
+                        {cat} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-stone-500">
+                    Size:
+                  </span>
+                  {['All', 'S', 'M', 'L', 'XL', '2XL'].map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => {
+                        setStoreSizeFilter(sz);
+                        setCurrentPage(1);
+                      }}
+                      className={`cursor-pointer border px-2.5 py-1 text-xs font-bold transition ${
+                        storeSizeFilter === sz
+                          ? 'border-amber-800 bg-amber-800 text-white'
+                          : 'border-stone-300 bg-white text-stone-700 hover:border-stone-500'
+                      }`}
                     >
-                      <div className="flex items-start gap-4">
-                        {prod.image && (
-                          <div className="h-24 w-24 shrink-0 overflow-hidden border border-stone-300 bg-white">
+                      {sz}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Active Results & Clear Bar */}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone-300/80 pt-3 text-xs text-stone-600">
+                <span>
+                  Showing <strong>{paginatedStoreProducts.length}</strong> of{' '}
+                  <strong>{filteredStoreProducts.length}</strong> matching garments (Page{' '}
+                  {safeCurrentPage} of {totalPages})
+                </span>
+                {hasActiveStoreFilters && (
+                  <button
+                    type="button"
+                    onClick={resetStoreFilters}
+                    className="cursor-pointer font-bold uppercase tracking-wider text-amber-800 underline hover:text-[#1C1917]"
+                  >
+                    Clear All Filters
+                  </button>
+                )}
+              </div>
+            </section>
+
+            {/* EMPTY STATE */}
+            {filteredStoreProducts.length === 0 ? (
+              <div className="mt-10 border border-stone-300 bg-white/80 p-12 text-center">
+                <p className="font-serif text-2xl text-[#1C1917]">No garments match those filters</p>
+                <p className="mt-2 text-sm text-stone-600">
+                  Try clearing your search term, size, or category filter to browse the full collection.
+                </p>
+                <button
+                  type="button"
+                  onClick={resetStoreFilters}
+                  className="mt-5 cursor-pointer border border-[#1C1917] bg-[#1C1917] px-5 py-2.5 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] hover:border-amber-800 hover:bg-amber-800"
+                >
+                  Reset Catalog Filters
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* SIGNATURE EDITORIAL SPOTLIGHT (Shown on Page 1 when browsing unfiltered) */}
+                {showEditorialSpotlight && spotlightFeatured && (
+                  <div className="mt-10 grid gap-8 lg:grid-cols-12">
+                    <article className="flex flex-col justify-between border border-stone-300 bg-[#EFECE4] p-7 lg:col-span-6">
+                      <div>
+                        <div className="flex items-center justify-between border-b border-stone-300 pb-4 text-xs uppercase tracking-widest text-stone-600">
+                          <span>01 &bull; {spotlightFeatured.badge}</span>
+                          <span>{totalUnitsForProduct(spotlightFeatured)} units</span>
+                        </div>
+
+                        {spotlightFeatured.image ? (
+                          <div className="my-6 h-64 w-full overflow-hidden border border-stone-300 bg-white">
                             <img
-                              src={prod.image}
-                              alt={prod.name}
-                              className="h-full w-full object-cover object-center"
+                              src={spotlightFeatured.image}
+                              alt={spotlightFeatured.name}
+                              className="h-full w-full object-cover object-center transition duration-300 hover:scale-105"
                             />
                           </div>
+                        ) : (
+                          <div className="my-7 flex h-48 items-center justify-center border border-stone-300 bg-[#F6F4EF] px-6 text-center">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800">
+                                {spotlightFeatured.category}
+                              </p>
+                              <p className="mt-2 font-serif text-2xl text-[#1C1917]">
+                                {spotlightFeatured.name}
+                              </p>
+                            </div>
+                          </div>
                         )}
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between text-xs uppercase tracking-widest text-stone-500">
-                            <span>
-                              0{idx + 2} &bull; {prod.badge}
-                            </span>
-                            <span className="text-amber-800">{units} in stock</span>
-                          </div>
-                          <div className="mt-2.5 flex items-baseline justify-between gap-4">
-                            <h2 className="font-serif text-xl text-[#1C1917]">{prod.name}</h2>
-                            <span className="shrink-0 text-base font-semibold text-[#1C1917]">
-                              ${Number(prod.price).toFixed(2)}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-xs uppercase tracking-wider text-stone-500">
-                            Category: {prod.category}
+
+                        <div className="flex items-baseline justify-between gap-4">
+                          <h2 className="font-serif text-xl text-[#1C1917]">
+                            {spotlightFeatured.name}
+                          </h2>
+                          <span className="shrink-0 text-lg font-semibold text-[#1C1917]">
+                            ${Number(spotlightFeatured.price).toFixed(2)}
+                          </span>
+                        </div>
+                        {spotlightFeatured.description && (
+                          <p className="mt-1.5 text-xs leading-relaxed text-stone-600">
+                            {spotlightFeatured.description}
                           </p>
+                        )}
+
+                        {/* Interactive Size Availability Strip */}
+                        <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                          {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
+                            const qty = Number(spotlightFeatured.sizeStock?.[sz] || 0);
+                            return (
+                              <button
+                                key={sz}
+                                type="button"
+                                disabled={qty === 0}
+                                onClick={() => openQuickView(spotlightFeatured, sz)}
+                                className={`cursor-pointer border px-2 py-0.5 text-[11px] font-bold transition ${
+                                  qty > 0
+                                    ? 'border-stone-400 bg-white text-[#1C1917] hover:border-[#1C1917]'
+                                    : 'cursor-not-allowed border-stone-300 bg-stone-200/60 text-stone-400 line-through'
+                                }`}
+                              >
+                                {sz}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
                       <button
                         type="button"
-                        disabled={units === 0}
-                        onClick={() => {
-                          const firstAvail =
-                            ['S', 'M', 'L', 'XL', '2XL'].find(
-                              (sz) => Number(prod.sizeStock?.[sz] || 0) > 0
-                            ) || 'L';
-                          setSelectedSize(firstAvail);
-                          setSelectedProd(prod);
-                        }}
-                        className="mt-5 w-full cursor-pointer border border-stone-800 bg-transparent py-2.5 text-xs font-semibold uppercase tracking-widest text-[#1C1917] transition hover:bg-[#1C1917] hover:text-[#F6F4EF] disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={totalUnitsForProduct(spotlightFeatured) === 0}
+                        onClick={() => openQuickView(spotlightFeatured)}
+                        className="mt-6 w-full cursor-pointer border border-[#1C1917] bg-[#1C1917] py-3 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] transition hover:border-amber-800 hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        {units === 0 ? 'Sold Out' : 'Select Size & Add'}
+                        {totalUnitsForProduct(spotlightFeatured) === 0
+                          ? 'Sold Out'
+                          : 'Select Size & Add'}
                       </button>
                     </article>
-                  );
-                })}
-              </div>
-            </div>
+
+                    <div className="flex flex-col justify-between gap-6 lg:col-span-6">
+                      {spotlightCompanion.map((prod, idx) => {
+                        const units = totalUnitsForProduct(prod);
+                        return (
+                          <article
+                            key={prod.id}
+                            className="flex flex-1 flex-col justify-between border border-stone-300 bg-white/75 p-6"
+                          >
+                            <div className="flex items-start gap-4">
+                              {prod.image && (
+                                <div className="h-24 w-24 shrink-0 overflow-hidden border border-stone-300 bg-white">
+                                  <img
+                                    src={prod.image}
+                                    alt={prod.name}
+                                    className="h-full w-full object-cover object-center"
+                                  />
+                                </div>
+                              )}
+                              <div className="flex-1">
+                                <div className="flex items-center justify-between text-xs uppercase tracking-widest text-stone-500">
+                                  <span>
+                                    0{idx + 2} &bull; {prod.badge}
+                                  </span>
+                                  <span className="text-amber-800">{units} in stock</span>
+                                </div>
+                                <div className="mt-2 flex items-baseline justify-between gap-4">
+                                  <h2 className="font-serif text-xl text-[#1C1917]">{prod.name}</h2>
+                                  <span className="shrink-0 text-base font-semibold text-[#1C1917]">
+                                    ${Number(prod.price).toFixed(2)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs uppercase tracking-wider text-stone-500">
+                                  Category: {prod.category}
+                                </p>
+                                {prod.description && (
+                                  <p className="mt-1.5 text-xs text-stone-600">{prod.description}</p>
+                                )}
+
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                  {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
+                                    const qty = Number(prod.sizeStock?.[sz] || 0);
+                                    return (
+                                      <button
+                                        key={sz}
+                                        type="button"
+                                        disabled={qty === 0}
+                                        onClick={() => openQuickView(prod, sz)}
+                                        className={`cursor-pointer border px-2 py-0.5 text-[10px] font-bold transition ${
+                                          qty > 0
+                                            ? 'border-stone-300 bg-[#F6F4EF] text-[#1C1917] hover:border-[#1C1917]'
+                                            : 'cursor-not-allowed border-stone-200 bg-stone-100 text-stone-400 line-through'
+                                        }`}
+                                      >
+                                        {sz}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={units === 0}
+                              onClick={() => openQuickView(prod)}
+                              className="mt-5 w-full cursor-pointer border border-stone-800 bg-transparent py-2.5 text-xs font-semibold uppercase tracking-widest text-[#1C1917] transition hover:bg-[#1C1917] hover:text-[#F6F4EF] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {units === 0 ? 'Sold Out' : 'Select Size & Add'}
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* FULL SCALABLE CATALOG GRID */}
+                {gridProducts.length > 0 && (
+                  <div className="mt-10">
+                    {showEditorialSpotlight && (
+                      <div className="mb-5 flex items-center justify-between border-b border-stone-300 pb-3">
+                        <span className="text-xs font-bold uppercase tracking-[0.2em] text-amber-800">
+                          Complete Collection Grid
+                        </span>
+                        <span className="text-xs text-stone-600">
+                          Click any size pill to quick-add
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                      {gridProducts.map((prod) => {
+                        const units = totalUnitsForProduct(prod);
+                        return (
+                          <article
+                            key={prod.id}
+                            className="flex flex-col justify-between border border-stone-300 bg-white/80 p-6 transition hover:border-stone-500"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between text-[11px] uppercase tracking-widest text-stone-500">
+                                <span>{prod.badge}</span>
+                                <span className="font-semibold text-amber-800">
+                                  {units} in stock
+                                </span>
+                              </div>
+
+                              {prod.image ? (
+                                <div className="my-4 h-48 w-full overflow-hidden border border-stone-200 bg-white">
+                                  <img
+                                    src={prod.image}
+                                    alt={prod.name}
+                                    className="h-full w-full object-cover object-center transition duration-300 hover:scale-105"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="my-4 flex h-40 items-center justify-center border border-stone-200 bg-[#F6F4EF] px-4 text-center">
+                                  <div>
+                                    <p className="text-[10px] uppercase tracking-[0.2em] text-amber-800">
+                                      {prod.category}
+                                    </p>
+                                    <p className="mt-1.5 font-serif text-lg text-[#1C1917]">
+                                      {prod.name}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="flex items-baseline justify-between gap-3">
+                                <h3 className="font-serif text-lg text-[#1C1917]">{prod.name}</h3>
+                                <span className="shrink-0 text-base font-bold text-[#1C1917]">
+                                  ${Number(prod.price).toFixed(2)}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] uppercase tracking-wider text-stone-500">
+                                {prod.category}
+                              </p>
+                              {prod.description && (
+                                <p className="mt-1.5 text-xs text-stone-600">{prod.description}</p>
+                              )}
+
+                              {/* Live Per-Size Pills */}
+                              <div className="mt-3.5 flex flex-wrap gap-1.5">
+                                {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
+                                  const qty = Number(prod.sizeStock?.[sz] || 0);
+                                  const highlighted = storeSizeFilter === sz && qty > 0;
+                                  return (
+                                    <button
+                                      key={sz}
+                                      type="button"
+                                      disabled={qty === 0}
+                                      onClick={() => openQuickView(prod, sz)}
+                                      className={`cursor-pointer border px-2 py-0.5 text-[10px] font-bold transition ${
+                                        qty === 0
+                                          ? 'cursor-not-allowed border-stone-200 bg-stone-100 text-stone-400 line-through'
+                                          : highlighted
+                                          ? 'border-amber-800 bg-amber-800 text-white'
+                                          : 'border-stone-300 bg-[#F6F4EF] text-[#1C1917] hover:border-[#1C1917]'
+                                      }`}
+                                    >
+                                      {sz}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={units === 0}
+                              onClick={() => openQuickView(prod)}
+                              className="mt-5 w-full cursor-pointer border border-[#1C1917] bg-[#1C1917] py-2.5 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] transition hover:border-amber-800 hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {units === 0 ? 'Sold Out' : 'Select Size & Add'}
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* PAGINATION CONTROLS */}
+                {totalPages > 1 && (
+                  <nav
+                    aria-label="Catalog Pagination"
+                    className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-stone-300 pt-6"
+                  >
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex cursor-pointer items-center gap-1.5 border border-stone-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:border-[#1C1917] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </button>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((pageNum) => (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`h-9 w-9 cursor-pointer border text-xs font-bold transition ${
+                            safeCurrentPage === pageNum
+                              ? 'border-[#1C1917] bg-[#1C1917] text-[#F6F4EF]'
+                              : 'border-stone-300 bg-white text-[#1C1917] hover:border-stone-500'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="inline-flex cursor-pointer items-center gap-1.5 border border-stone-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:border-[#1C1917] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </nav>
+                )}
+              </>
+            )}
           </main>
         </>
       ) : (
@@ -862,6 +1562,252 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* UNIVERSAL ADMIN OMNISEARCH BAR (Searches Everything Across Store & CFO Suite) */}
+          <div className="relative mb-7 border-2 border-[#1C1917] bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">
+                Global Site &amp; Operations Search (Storefront &bull; Orders &bull; Team &bull; Expenses &bull; Promos &bull; P&amp;L)
+              </span>
+              <span className="text-[11px] text-stone-500">Shortcut: Ctrl + K</span>
+            </div>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-stone-500" />
+              <input
+                ref={adminSearchRef}
+                type="text"
+                value={adminGlobalSearch}
+                onFocus={() => setAdminSearchOpen(true)}
+                onChange={(e) => {
+                  setAdminGlobalSearch(e.target.value);
+                  setAdminSearchOpen(true);
+                }}
+                placeholder="Search anything: hoodie, SG-2041, Jordan Taylor, Maya Lin, tracking #, promo code, vendor..."
+                className="w-full border border-stone-300 bg-[#F6F4EF] py-2.5 pl-10 pr-24 text-sm text-[#1C1917] placeholder-stone-500 focus:border-[#1C1917] focus:bg-white focus:outline-none"
+              />
+              {adminGlobalSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminGlobalSearch('');
+                    setAdminSearchOpen(false);
+                    setHighlightedId('');
+                  }}
+                  className="absolute right-3 top-2.5 inline-flex cursor-pointer items-center gap-1 border border-stone-300 bg-white px-2 py-0.5 text-xs font-semibold text-stone-700 hover:border-[#1C1917]"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* LIVE CATEGORIZED OMNISEARCH DROPDOWN */}
+            {adminSearchOpen && adminGlobalSearch.trim() !== '' && (
+              <div className="mt-3 max-h-96 overflow-y-auto border border-stone-300 bg-[#F6F4EF] p-4 shadow-xl">
+                <div className="mb-3 flex items-center justify-between border-b border-stone-300 pb-2 text-xs">
+                  <span>
+                    Found <strong>{adminOmnisearchResults.total}</strong> matches across store &amp; admin
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSearchOpen(false)}
+                    className="cursor-pointer font-semibold text-stone-600 hover:text-[#1C1917]"
+                  >
+                    Close Results
+                  </button>
+                </div>
+
+                {adminOmnisearchResults.total === 0 ? (
+                  <p className="py-4 text-center text-xs text-stone-600">
+                    No matching products, orders, employees, expenses, or promo codes found for &ldquo;{adminGlobalSearch}&rdquo;.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Matched Storefront & Inventory Products */}
+                    {adminOmnisearchResults.products.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          <Package className="h-3.5 w-3.5" />
+                          Storefront &amp; Inventory SKUs ({adminOmnisearchResults.products.length})
+                        </p>
+                        <div className="space-y-1.5">
+                          {adminOmnisearchResults.products.map((prod) => (
+                            <div
+                              key={prod.id}
+                              className="flex flex-wrap items-center justify-between gap-2 border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <div>
+                                <strong>{prod.name}</strong> &bull; {prod.category} &bull; $
+                                {Number(prod.price).toFixed(2)} ({totalUnitsForProduct(prod)} in stock)
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    jumpToAdminRecord('inventory', prod.id, {
+                                      inventorySearch: prod.name,
+                                    })
+                                  }
+                                  className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF] hover:bg-amber-800"
+                                >
+                                  Edit in Inventory
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToStoreProduct(prod.name)}
+                                  className="inline-flex cursor-pointer items-center gap-1 border border-stone-400 bg-[#F6F4EF] px-2.5 py-1 text-[11px] font-semibold text-[#1C1917] hover:border-[#1C1917]"
+                                >
+                                  <span>View in Store</span>
+                                  <ExternalLink className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Matched Orders */}
+                    {adminOmnisearchResults.orders.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          <Receipt className="h-3.5 w-3.5" />
+                          Orders &amp; Customers ({adminOmnisearchResults.orders.length})
+                        </p>
+                        <div className="space-y-1.5">
+                          {adminOmnisearchResults.orders.map((ord) => (
+                            <div
+                              key={ord.id}
+                              className="flex flex-wrap items-center justify-between gap-2 border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <div>
+                                <strong>{ord.id}</strong> &bull; {ord.customerName} ($
+                                {Number(ord.total).toFixed(2)}) &bull;{' '}
+                                <span className="font-semibold">
+                                  {ord.fulfillmentStatus || 'Unfulfilled'}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  jumpToAdminRecord('orders', ord.id, { orderSearch: ord.id })
+                                }
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF] hover:bg-amber-800"
+                              >
+                                Open Order
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Matched Employees */}
+                    {adminOmnisearchResults.employees.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          <Users className="h-3.5 w-3.5" />
+                          Team &amp; Payroll ({adminOmnisearchResults.employees.length})
+                        </p>
+                        <div className="space-y-1.5">
+                          {adminOmnisearchResults.employees.map((emp) => (
+                            <div
+                              key={emp.id}
+                              className="flex flex-wrap items-center justify-between gap-2 border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <div>
+                                <strong>{emp.name}</strong> &bull; {emp.role} ({emp.department})
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  jumpToAdminRecord('employees', emp.id, {
+                                    employeeSearch: emp.name,
+                                  })
+                                }
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF] hover:bg-amber-800"
+                              >
+                                Open Payroll Record
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Matched Expenses, Promos & P&L Adjustments */}
+                    {(adminOmnisearchResults.expenses.length > 0 ||
+                      adminOmnisearchResults.promos.length > 0 ||
+                      adminOmnisearchResults.adjustments.length > 0) && (
+                      <div>
+                        <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          <Tag className="h-3.5 w-3.5" />
+                          Expenses, Promos &amp; Ledger Entries
+                        </p>
+                        <div className="space-y-1.5">
+                          {adminOmnisearchResults.expenses.map((ex) => (
+                            <div
+                              key={ex.id}
+                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <span>
+                                <strong>Expense:</strong> {ex.vendor} ({ex.category}) &bull; -$
+                                {Number(ex.amount).toFixed(2)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => jumpToAdminRecord('expenses', ex.id)}
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                              >
+                                Go to Expenses
+                              </button>
+                            </div>
+                          ))}
+                          {adminOmnisearchResults.promos.map((pr) => (
+                            <div
+                              key={pr.id}
+                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <span>
+                                <strong>Promo Code:</strong> {pr.code} (
+                                {pr.type === 'percent' ? `${pr.value}% Off` : `$${pr.value} Off`})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => jumpToAdminRecord('promos', pr.id)}
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                              >
+                                Go to Promos
+                              </button>
+                            </div>
+                          ))}
+                          {adminOmnisearchResults.adjustments.map((adj) => (
+                            <div
+                              key={adj.id}
+                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
+                            >
+                              <span>
+                                <strong>P&amp;L Entry:</strong> {adj.title} ($
+                                {Number(adj.amount).toFixed(2)})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => jumpToAdminRecord('pnl', adj.id)}
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                              >
+                                Go to P&amp;L
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-stone-300 pb-5">
             <div>
@@ -1107,7 +2053,11 @@ export default function App() {
                     {state.pnlAdjustments.map((a) => (
                       <div
                         key={a.id}
-                        className="flex items-center justify-between border border-stone-200 bg-white px-3 py-1.5 text-xs"
+                        className={`flex items-center justify-between border px-3 py-1.5 text-xs ${
+                          highlightedId === a.id
+                            ? 'border-amber-700 bg-amber-50'
+                            : 'border-stone-200 bg-white'
+                        }`}
                       >
                         <span>
                           <strong>{a.date}</strong> &bull; {a.title} (
@@ -1290,17 +2240,39 @@ export default function App() {
               </div>
 
               <div className="border border-stone-300 bg-white/90 p-6">
-                <div>
-                  <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
-                    <Users className="h-5 w-5 text-amber-800" />
-                    Employees, Shift Hours &amp; Role Permissions
-                  </h2>
-                  <p className="mt-1 text-xs text-stone-600">
-                    Add staff members, adjust hourly rates or shift hours with 1-click steppers, inspect pay stubs, or toggle Active / Off-Cycle status. Active payroll deducts live from your P&amp;L.
-                  </p>
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
+                      <Users className="h-5 w-5 text-amber-800" />
+                      Employees, Shift Hours &amp; Role Permissions
+                    </h2>
+                    <p className="mt-1 text-xs text-stone-600">
+                      Add staff members, adjust hourly rates or shift hours with 1-click steppers, inspect pay stubs, or toggle Active / Off-Cycle status.
+                    </p>
+                  </div>
+
+                  {/* Employee Search Input */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
+                    <input
+                      type="text"
+                      value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)}
+                      placeholder="Search employees or roles..."
+                      className="w-full border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
+                    />
+                    {employeeSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeSearch('')}
+                        className="absolute right-2 top-2 cursor-pointer text-stone-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Add New Employee Form */}
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -1401,16 +2373,17 @@ export default function App() {
                   </button>
                 </form>
 
-                {/* Employee Roster Cards */}
                 <div className="mt-6 space-y-3">
-                  {employees.map((emp) => {
+                  {filteredEmployees.map((emp) => {
                     const payout = getEmployeePayout(emp);
                     return (
                       <div
                         key={emp.id}
-                        className={`flex flex-wrap items-center justify-between gap-4 border border-stone-300 bg-white p-5 transition ${
-                          !emp.active ? 'opacity-65' : ''
-                        }`}
+                        className={`flex flex-wrap items-center justify-between gap-4 border p-5 transition ${
+                          highlightedId === emp.id
+                            ? 'border-2 border-amber-700 bg-amber-50/50'
+                            : 'border-stone-300 bg-white'
+                        } ${!emp.active ? 'opacity-65' : ''}`}
                       >
                         <div className="min-w-[210px]">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1588,16 +2561,46 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <span className="text-xs text-stone-600">
-                  Showing {filteredOrders.length} of {state.orders.length} orders
-                </span>
+
+                {/* Order Search Input */}
+                <div className="flex items-center gap-3">
+                  <div className="relative w-64">
+                    <Search className="pointer-events-none absolute left-3 top-2 h-3.5 w-3.5 text-stone-500" />
+                    <input
+                      type="text"
+                      value={orderSearch}
+                      onChange={(e) => setOrderSearch(e.target.value)}
+                      placeholder="Search order #, customer, tracking..."
+                      className="w-full border border-stone-300 bg-white py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
+                    />
+                    {orderSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setOrderSearch('')}
+                        className="absolute right-2 top-2 cursor-pointer text-stone-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-xs text-stone-600">
+                    {filteredOrders.length} of {state.orders.length}
+                  </span>
+                </div>
               </div>
 
               {filteredOrders.map((o) => {
                 const netOrderProfit =
                   Number(o.total) - Number(o.cogs) - Number(o.labelCost) - Number(o.fee);
                 return (
-                  <div key={o.id} className="border border-stone-300 bg-white/90 p-6">
+                  <div
+                    key={o.id}
+                    className={`border p-6 transition ${
+                      highlightedId === o.id
+                        ? 'border-2 border-amber-700 bg-amber-50/40'
+                        : 'border-stone-300 bg-white/90'
+                    }`}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-200 pb-4">
                       <div>
                         <div className="flex flex-wrap items-center gap-2.5">
@@ -1717,12 +2720,50 @@ export default function App() {
           {cfoTab === 'inventory' && (
             <div className="space-y-6">
               <div className="border border-stone-300 bg-white/90 p-6">
-                <h2 className="font-serif text-xl font-normal text-[#1C1917]">
-                  SKU Profit Margin Leaderboard, Photos &amp; Live Size Stock
-                </h2>
-                <p className="mt-1 text-xs text-stone-600">
-                  Upload or replace product photos, adjust retail prices and unit COGS, or update size quantities below. Storefront listings update immediately.
-                </p>
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <h2 className="font-serif text-xl font-normal text-[#1C1917]">
+                      SKU Profit Margin Leaderboard, Photos &amp; Live Size Stock
+                    </h2>
+                    <p className="mt-1 text-xs text-stone-600">
+                      Upload or replace product photos, adjust retail prices and unit COGS, or update size quantities below. Storefront listings update immediately.
+                    </p>
+                  </div>
+
+                  {/* Quick Admin Catalog Search & Category Filter */}
+                  <div className="flex flex-wrap gap-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
+                      <input
+                        type="text"
+                        value={inventorySearch}
+                        onChange={(e) => setInventorySearch(e.target.value)}
+                        placeholder="Filter SKUs..."
+                        className="border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
+                      />
+                      {inventorySearch && (
+                        <button
+                          type="button"
+                          onClick={() => setInventorySearch('')}
+                          className="absolute right-2 top-2 cursor-pointer text-stone-500"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                    <select
+                      value={inventoryCatFilter}
+                      onChange={(e) => setInventoryCatFilter(e.target.value)}
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                    >
+                      {catalogCategories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat === 'All' ? 'All Categories' : cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
                 <div className="mt-5 space-y-4">
                   {skuLeaderboard.map((p, rank) => {
@@ -1730,7 +2771,14 @@ export default function App() {
                     const margin = p.price > 0 ? (unitProfit / p.price) * 100 : 0;
                     const units = totalUnitsForProduct(p);
                     return (
-                      <div key={p.id} className="border border-stone-300 bg-[#F6F4EF] p-5">
+                      <div
+                        key={p.id}
+                        className={`border p-5 transition ${
+                          highlightedId === p.id
+                            ? 'border-2 border-amber-700 bg-amber-50/40'
+                            : 'border-stone-300 bg-[#F6F4EF]'
+                        }`}
+                      >
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           {/* Product Photo Uploader + Title */}
                           <div className="flex items-start gap-4">
@@ -1779,13 +2827,21 @@ export default function App() {
                             </div>
 
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className="bg-[#1C1917] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F6F4EF]">
                                   #{rank + 1} Margin
                                 </span>
                                 <span className="text-xs uppercase tracking-wider text-stone-500">
                                   {p.category} &bull; {units} total units
                                 </span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToStoreProduct(p.name)}
+                                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold text-amber-800 hover:underline"
+                                >
+                                  <span>View in Storefront</span>
+                                  <ExternalLink className="h-3 w-3" />
+                                </button>
                               </div>
                               <h3 className="mt-1 font-serif text-lg text-[#1C1917]">{p.name}</h3>
                             </div>
@@ -1899,6 +2955,7 @@ export default function App() {
                     name: newSku.name.trim(),
                     category: newSku.category,
                     badge: newSku.badge.trim() || 'Capsule Drop',
+                    description: newSku.description.trim() || 'Limited capsule release.',
                     price: parseFloat(newSku.price) || 68,
                     unitCost: parseFloat(newSku.unitCost) || 20,
                     image: newSku.image || '',
@@ -1915,6 +2972,7 @@ export default function App() {
                     name: '',
                     category: 'Hoodies',
                     badge: 'Capsule Drop',
+                    description: '',
                     price: '68',
                     unitCost: '21',
                     image: '',
@@ -2011,6 +3069,13 @@ export default function App() {
                     className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
                   />
                 </div>
+                <input
+                  type="text"
+                  placeholder="Fabric weight, fit & search keywords (e.g. 460 GSM heavyweight fleece)..."
+                  value={newSku.description}
+                  onChange={(e) => setNewSku({ ...newSku, description: e.target.value })}
+                  className="mt-3 w-full border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
+                />
                 <button
                   type="submit"
                   className="mt-4 inline-flex cursor-pointer items-center gap-1.5 bg-[#1C1917] px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
@@ -2093,7 +3158,12 @@ export default function App() {
 
                 <div className="mt-5 divide-y divide-stone-200">
                   {state.expenses.map((exp) => (
-                    <div key={exp.id} className="flex items-center justify-between py-3 text-sm">
+                    <div
+                      key={exp.id}
+                      className={`flex items-center justify-between px-2 py-3 text-sm ${
+                        highlightedId === exp.id ? 'bg-amber-50' : ''
+                      }`}
+                    >
                       <div>
                         <strong>{exp.vendor}</strong>
                         <p className="text-xs text-stone-500">
@@ -2211,7 +3281,11 @@ export default function App() {
                 {promos.map((pr) => (
                   <div
                     key={pr.id}
-                    className="flex items-center justify-between border border-stone-300 bg-white p-5"
+                    className={`flex items-center justify-between border p-5 ${
+                      highlightedId === pr.id
+                        ? 'border-2 border-amber-700 bg-amber-50/40'
+                        : 'border-stone-300 bg-white'
+                    }`}
                   >
                     <div>
                       <strong className="text-base">{pr.code}</strong>
@@ -2272,6 +3346,9 @@ export default function App() {
               </div>
             )}
             <p className="mt-2 font-semibold text-amber-800">${selectedProd.price.toFixed(2)}</p>
+            {selectedProd.description && (
+              <p className="mt-1 text-xs text-stone-600">{selectedProd.description}</p>
+            )}
             <div className="mt-4 grid grid-cols-5 gap-2">
               {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
                 const count = Number(selectedProd.sizeStock?.[sz] || 0);
