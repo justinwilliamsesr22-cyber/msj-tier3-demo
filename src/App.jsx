@@ -31,11 +31,19 @@ import {
   Edit3,
   Truck,
   Ruler,
+  User,
+  Heart,
+  MapPin,
+  Lock,
+  LogOut,
+  ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'msj_tier3_demo_v1';
 const ITEMS_PER_PAGE = 6;
 const VALID_CFO_TABS = ['pnl', 'employees', 'orders', 'inventory', 'expenses', 'promos'];
+const VALID_ACCOUNT_TABS = ['orders', 'saved', 'addresses', 'profile'];
 
 const INITIAL_DATA = {
   products: [
@@ -225,6 +233,8 @@ const INITIAL_DATA = {
     {
       id: 'emp-1',
       name: 'Maya Lin',
+      email: 'maya@susquehannagoods.demo',
+      pin: '1001',
       role: 'DTF Print & Production Lead',
       department: 'Production & DTF',
       accessLevel: 'Fulfillment & Stock',
@@ -236,6 +246,8 @@ const INITIAL_DATA = {
     {
       id: 'emp-2',
       name: 'Darius Brooks',
+      email: 'darius@susquehannagoods.demo',
+      pin: '1002',
       role: 'Showroom & Pop-Up Associate',
       department: 'Retail & Pop-Up',
       accessLevel: 'POS & Orders',
@@ -247,6 +259,8 @@ const INITIAL_DATA = {
     {
       id: 'emp-3',
       name: 'Elena Morales',
+      email: 'elena@susquehannagoods.demo',
+      pin: '1003',
       role: 'Lookbook & Drop Photographer',
       department: 'Creative & Media',
       accessLevel: 'Read-Only Media',
@@ -290,6 +304,35 @@ const INITIAL_DATA = {
     { id: 'pr-2', code: 'VIP20', type: 'fixed', value: 20, active: true, uses: 4 },
   ],
   budgets: { restock: 35, tax: 25, owner: 25, growth: 15 },
+  customers: [
+    {
+      id: 'cust-1',
+      name: 'Jordan Taylor',
+      email: 'jtaylor@example.com',
+      password: 'demo-user-123',
+      preferredSize: 'L',
+      savedIds: ['sg-1', 'sg-4'],
+      addresses: [
+        {
+          id: 'addr-1',
+          label: 'Home',
+          recipient: 'Jordan Taylor',
+          line1: '215 State St, Harrisburg, PA 17101',
+          isDefault: true,
+        },
+        {
+          id: 'addr-2',
+          label: 'Studio / Work',
+          recipient: 'Jordan Taylor',
+          line1: '100 Market Sq, Suite 4B, Harrisburg, PA 17101',
+          isDefault: false,
+        },
+      ],
+    },
+  ],
+  activeCustomerEmail: '',
+  staffRole: 'owner', // 'owner' | 'staff'
+  staffSignedInName: 'Founder & CFO',
 };
 
 function compressImageFile(file, maxDimension = 900) {
@@ -376,6 +419,10 @@ export default function App() {
           ...(parsed.overtimeRule || {}),
         },
         promos: Array.isArray(parsed.promos) ? parsed.promos : INITIAL_DATA.promos,
+        customers: Array.isArray(parsed.customers) ? parsed.customers : INITIAL_DATA.customers,
+        activeCustomerEmail: parsed.activeCustomerEmail || '',
+        staffRole: parsed.staffRole === 'staff' ? 'staff' : 'owner',
+        staffSignedInName: parsed.staffSignedInName || 'Founder & CFO',
         orders: Array.isArray(parsed.orders)
           ? parsed.orders.map((o) => ({
               fulfillmentStatus: o.fulfillmentStatus || o.status || 'Unfulfilled',
@@ -401,10 +448,17 @@ export default function App() {
     }
   }, [state]);
 
+  const isStaffView = mode === 'cfo' && state.staffRole === 'staff';
+  const effectiveCfoTab =
+    isStaffView && ['pnl', 'expenses', 'promos'].includes(cfoTab) ? 'orders' : cfoTab;
+
   // Sync mode & tab with browser Back/Forward history + pageshow
   const updateNavigation = (nextMode, nextTab, recordHistory = true) => {
-    const safeTab = VALID_CFO_TABS.includes(nextTab) ? nextTab : 'pnl';
-    const changed = nextMode !== mode || (nextMode === 'cfo' && safeTab !== cfoTab);
+    let safeTab = VALID_CFO_TABS.includes(nextTab) ? nextTab : 'pnl';
+    if (nextMode === 'cfo' && state.staffRole === 'staff' && ['pnl', 'expenses', 'promos'].includes(safeTab)) {
+      safeTab = 'orders';
+    }
+    const changed = nextMode !== mode || (nextMode === 'cfo' && safeTab !== effectiveCfoTab);
     setMode(nextMode);
     if (nextMode === 'cfo') {
       setCfoTab(safeTab);
@@ -458,6 +512,10 @@ export default function App() {
   const empRateInputRef = useRef(null);
   const checkoutNameRef = useRef(null);
   const checkoutEmailRef = useRef(null);
+  const authNameRef = useRef(null);
+  const authEmailRef = useRef(null);
+  const authPasswordRef = useRef(null);
+  const authConfirmPasswordRef = useRef(null);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -477,6 +535,28 @@ export default function App() {
   // Field-level error states
   const [empFieldError, setEmpFieldError] = useState({ field: '', message: '' });
   const [checkoutFieldError, setCheckoutFieldError] = useState({ field: '', message: '' });
+
+  // Customer Account Modal & Auth State
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountSubTab, setAccountSubTab] = useState('orders');
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register' | 'reset'
+  const [authForm, setAuthForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+  });
+  const [authFieldError, setAuthFieldError] = useState({ field: '', message: '' });
+  const [authNotice, setAuthNotice] = useState('');
+  const [editingOrderId, setEditingOrderId] = useState('');
+  const [editingOrderAddress, setEditingOrderAddress] = useState('');
+  const [newAddressForm, setNewAddressForm] = useState({
+    label: 'Home',
+    recipient: '',
+    line1: '',
+    makeDefault: true,
+  });
+  const [addressError, setAddressError] = useState('');
 
   // Storefront Catalog Discovery, Search, Filter, Sort & Pagination State
   const [storeSearch, setStoreSearch] = useState('');
@@ -502,6 +582,7 @@ export default function App() {
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
   const [orderBanner, setOrderBanner] = useState('');
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
+  const [postOrderAccountPrompt, setPostOrderAccountPrompt] = useState(null);
 
   // Admin & CFO Universal Search + Tab Filters + Shift Correction Modal
   const [adminGlobalSearch, setAdminGlobalSearch] = useState('');
@@ -566,6 +647,382 @@ export default function App() {
     value: '15',
   });
 
+  const customers = state.customers || [];
+  const activeCustomer = useMemo(() => {
+    if (!state.activeCustomerEmail) return null;
+    return (
+      customers.find(
+        (c) => c.email.toLowerCase() === state.activeCustomerEmail.trim().toLowerCase()
+      ) || null
+    );
+  }, [customers, state.activeCustomerEmail]);
+
+  const activeCustomerOrders = useMemo(() => {
+    if (!activeCustomer) return [];
+    const targetEmail = activeCustomer.email.toLowerCase();
+    return state.orders.filter(
+      (o) => (o.customerEmail || '').toLowerCase() === targetEmail
+    );
+  }, [activeCustomer, state.orders]);
+
+  const savedProducts = useMemo(() => {
+    if (!activeCustomer) return [];
+    const savedSet = new Set(activeCustomer.savedIds || []);
+    return state.products.filter((p) => savedSet.has(p.id));
+  }, [activeCustomer, state.products]);
+
+  // Pre-fill checkout form when customer signs in
+  useEffect(() => {
+    if (activeCustomer) {
+      const defAddr =
+        (activeCustomer.addresses || []).find((a) => a.isDefault)?.line1 ||
+        activeCustomer.addresses?.[0]?.line1 ||
+        '';
+      setCheckoutForm((prev) => ({
+        name: prev.name || activeCustomer.name || '',
+        email: prev.email || activeCustomer.email || '',
+        address: prev.address || defAddr,
+      }));
+    }
+  }, [activeCustomer]);
+
+  const toggleSavedProduct = (productId) => {
+    if (!activeCustomer) {
+      setAuthFieldError({ field: '', message: '' });
+      setAuthNotice('Sign in or create a free account to save items to your wishlist.');
+      setAccountSubTab('orders');
+      setAccountModalOpen(true);
+      return;
+    }
+    const existingSaved = activeCustomer.savedIds || [];
+    const nextSaved = existingSaved.includes(productId)
+      ? existingSaved.filter((id) => id !== productId)
+      : [...existingSaved, productId];
+
+    setState((prev) => ({
+      ...prev,
+      customers: (prev.customers || []).map((c) =>
+        c.id === activeCustomer.id ? { ...c, savedIds: nextSaved } : c
+      ),
+    }));
+  };
+
+  const openCustomerPortal = (tab = 'orders') => {
+    if (VALID_ACCOUNT_TABS.includes(tab)) {
+      setAccountSubTab(tab);
+    }
+    setAuthFieldError({ field: '', message: '' });
+    setAuthNotice('');
+    setEditingOrderId('');
+    setAccountModalOpen(true);
+  };
+
+  const handleCustomerAuthSubmit = (e) => {
+    e.preventDefault();
+    setAuthFieldError({ field: '', message: '' });
+    setAuthNotice('');
+
+    const cleanEmail = authForm.email.trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setAuthFieldError({ field: 'email', message: 'Enter a valid email address.' });
+      authEmailRef.current?.focus();
+      return;
+    }
+
+    if (authMode === 'reset') {
+      const exists = customers.some((c) => c.email.toLowerCase() === cleanEmail);
+      if (!exists) {
+        setAuthFieldError({
+          field: 'email',
+          message: 'No customer account found with that email address.',
+        });
+        authEmailRef.current?.focus();
+        return;
+      }
+      setAuthNotice(
+        `Password reset link sent to ${cleanEmail} (Demo mode: your current password remains active).`
+      );
+      return;
+    }
+
+    if (authMode === 'register') {
+      if (!authForm.name.trim()) {
+        setAuthFieldError({ field: 'name', message: 'Full Name is required.' });
+        authNameRef.current?.focus();
+        return;
+      }
+      if (authForm.password.length < 6) {
+        setAuthFieldError({
+          field: 'password',
+          message: 'Password must be at least 6 characters.',
+        });
+        authPasswordRef.current?.focus();
+        return;
+      }
+      if (authForm.password !== authForm.confirmPassword) {
+        setAuthFieldError({
+          field: 'confirmPassword',
+          message: 'Passwords do not match.',
+        });
+        authConfirmPasswordRef.current?.focus();
+        return;
+      }
+      const duplicate = customers.some((c) => c.email.toLowerCase() === cleanEmail);
+      if (duplicate) {
+        setAuthFieldError({
+          field: 'email',
+          message: 'An account with this email already exists. Switch to Sign In.',
+        });
+        authEmailRef.current?.focus();
+        return;
+      }
+
+      const matchingOrders = state.orders.filter(
+        (o) => (o.customerEmail || '').toLowerCase() === cleanEmail
+      );
+      const seedAddress = matchingOrders[0]?.address || checkoutForm.address.trim() || '';
+
+      const createdCustomer = {
+        id: `cust-${Date.now()}`,
+        name: authForm.name.trim(),
+        email: cleanEmail,
+        password: authForm.password,
+        preferredSize: 'L',
+        savedIds: [],
+        addresses: seedAddress
+          ? [
+              {
+                id: `addr-${Date.now()}`,
+                label: 'Primary Shipping',
+                recipient: authForm.name.trim(),
+                line1: seedAddress,
+                isDefault: true,
+              },
+            ]
+          : [],
+      };
+
+      setState((prev) => ({
+        ...prev,
+        customers: [...(prev.customers || []), createdCustomer],
+        activeCustomerEmail: cleanEmail,
+      }));
+      setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+      setPostOrderAccountPrompt(null);
+      setAccountSubTab('orders');
+      return;
+    }
+
+    // Sign In
+    if (!authForm.password) {
+      setAuthFieldError({ field: 'password', message: 'Enter your password.' });
+      authPasswordRef.current?.focus();
+      return;
+    }
+    const found = customers.find((c) => c.email.toLowerCase() === cleanEmail);
+    if (!found) {
+      setAuthFieldError({
+        field: 'email',
+        message: 'No customer account found with that email.',
+      });
+      authEmailRef.current?.focus();
+      return;
+    }
+    if (found.password !== authForm.password) {
+      setAuthFieldError({
+        field: 'password',
+        message: 'Incorrect password for this account.',
+      });
+      authPasswordRef.current?.focus();
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      activeCustomerEmail: found.email,
+    }));
+    setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+    setAccountSubTab('orders');
+  };
+
+  const handleCustomerSignOut = () => {
+    setState((prev) => ({
+      ...prev,
+      activeCustomerEmail: '',
+    }));
+    setEditingOrderId('');
+    setAuthFieldError({ field: '', message: '' });
+    setAuthNotice('');
+  };
+
+  const handleSaveCustomerOrderAddress = (orderId) => {
+    const trimmed = editingOrderAddress.trim();
+    if (!trimmed) return;
+    setState((prev) => ({
+      ...prev,
+      orders: prev.orders.map((o) =>
+        o.id === orderId ? { ...o, address: trimmed } : o
+      ),
+    }));
+    setEditingOrderId('');
+    setEditingOrderAddress('');
+  };
+
+  const handleCancelUnfulfilledOrder = (orderId) => {
+    const targetOrder = state.orders.find((o) => o.id === orderId);
+    if (!targetOrder || (targetOrder.fulfillmentStatus || 'Unfulfilled') !== 'Unfulfilled') {
+      return;
+    }
+
+    const restoredProducts = state.products.map((prod) => {
+      const nextStock = { ...prod.sizeStock };
+      (targetOrder.items || []).forEach((item) => {
+        if (item.id === prod.id && item.size) {
+          nextStock[item.size] = Number(nextStock[item.size] || 0) + Number(item.qty || 1);
+        }
+      });
+      return { ...prod, sizeStock: nextStock };
+    });
+
+    setState((prev) => ({
+      ...prev,
+      products: restoredProducts,
+      orders: prev.orders.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              fulfillmentStatus: 'Cancelled',
+              subtotal: 0,
+              discount: 0,
+              shippingCollected: 0,
+              total: 0,
+              cogs: 0,
+              labelCost: 0,
+              fee: 0,
+            }
+          : o
+      ),
+    }));
+  };
+
+  const handleAddCustomerAddress = (e) => {
+    e.preventDefault();
+    if (!activeCustomer) return;
+    setAddressError('');
+    if (!newAddressForm.line1.trim()) {
+      setAddressError('Street address is required.');
+      return;
+    }
+    const newAddr = {
+      id: `addr-${Date.now()}`,
+      label: newAddressForm.label.trim() || 'Saved Address',
+      recipient: newAddressForm.recipient.trim() || activeCustomer.name,
+      line1: newAddressForm.line1.trim(),
+      isDefault: Boolean(newAddressForm.makeDefault),
+    };
+
+    const existingAddrs = activeCustomer.addresses || [];
+    const updatedAddrs = newAddr.isDefault
+      ? [...existingAddrs.map((a) => ({ ...a, isDefault: false })), newAddr]
+      : [...existingAddrs, newAddr];
+
+    setState((prev) => ({
+      ...prev,
+      customers: (prev.customers || []).map((c) =>
+        c.id === activeCustomer.id ? { ...c, addresses: updatedAddrs } : c
+      ),
+    }));
+    if (newAddr.isDefault) {
+      setCheckoutForm((prev) => ({ ...prev, address: newAddr.line1 }));
+    }
+    setNewAddressForm({
+      label: 'Home',
+      recipient: activeCustomer.name,
+      line1: '',
+      makeDefault: true,
+    });
+  };
+
+  const setDefaultCustomerAddress = (addrId) => {
+    if (!activeCustomer) return;
+    const updatedAddrs = (activeCustomer.addresses || []).map((a) => ({
+      ...a,
+      isDefault: a.id === addrId,
+    }));
+    const chosen = updatedAddrs.find((a) => a.id === addrId);
+    setState((prev) => ({
+      ...prev,
+      customers: (prev.customers || []).map((c) =>
+        c.id === activeCustomer.id ? { ...c, addresses: updatedAddrs } : c
+      ),
+    }));
+    if (chosen) {
+      setCheckoutForm((prev) => ({ ...prev, address: chosen.line1 }));
+    }
+  };
+
+  const updatePreferredSize = (sz) => {
+    if (!activeCustomer) return;
+    setState((prev) => ({
+      ...prev,
+      customers: (prev.customers || []).map((c) =>
+        c.id === activeCustomer.id ? { ...c, preferredSize: sz } : c
+      ),
+    }));
+  };
+
+  const handleQuickCreateAccountFromOrder = () => {
+    if (!postOrderAccountPrompt) return;
+    const cleanEmail = postOrderAccountPrompt.email.trim().toLowerCase();
+    const existing = customers.find((c) => c.email.toLowerCase() === cleanEmail);
+    if (existing) {
+      setState((prev) => ({ ...prev, activeCustomerEmail: existing.email }));
+      setPostOrderAccountPrompt(null);
+      openCustomerPortal('orders');
+      return;
+    }
+
+    const created = {
+      id: `cust-${Date.now()}`,
+      name: postOrderAccountPrompt.name || 'Customer',
+      email: cleanEmail,
+      password: 'demo-user-123',
+      preferredSize: activeCustomer?.preferredSize || 'L',
+      savedIds: [],
+      addresses: postOrderAccountPrompt.address
+        ? [
+            {
+              id: `addr-${Date.now()}`,
+              label: 'Primary Shipping',
+              recipient: postOrderAccountPrompt.name || 'Customer',
+              line1: postOrderAccountPrompt.address,
+              isDefault: true,
+            },
+          ]
+        : [],
+    };
+
+    setState((prev) => ({
+      ...prev,
+      customers: [...(prev.customers || []), created],
+      activeCustomerEmail: cleanEmail,
+    }));
+    setPostOrderAccountPrompt(null);
+    openCustomerPortal('orders');
+  };
+
+  const switchStaffRole = (nextRole) => {
+    const isStaff = nextRole === 'staff';
+    setState((prev) => ({
+      ...prev,
+      staffRole: isStaff ? 'staff' : 'owner',
+      staffSignedInName: isStaff ? 'Maya Lin (Staff)' : 'Founder & CFO',
+    }));
+    if (isStaff && ['pnl', 'expenses', 'promos'].includes(cfoTab)) {
+      updateNavigation('cfo', 'orders');
+    }
+  };
+
   const resetDemo = () => {
     localStorage.removeItem(STORAGE_KEY);
     setState(INITIAL_DATA);
@@ -573,9 +1030,12 @@ export default function App() {
     setAppliedPromo(null);
     setOrderBanner('');
     setLastPlacedOrder(null);
+    setPostOrderAccountPrompt(null);
     setStorageWarning('');
     setEmpFieldError({ field: '', message: '' });
     setCheckoutFieldError({ field: '', message: '' });
+    setAuthFieldError({ field: '', message: '' });
+    setAuthNotice('');
     notifiedOvertimeRef.current.clear();
     setStoreSearch('');
     setStoreCategory('All');
@@ -871,6 +1331,11 @@ export default function App() {
     if (!targetSize || Number(prod.sizeStock?.[targetSize] || 0) <= 0) {
       if (storeSizeFilter !== 'All' && Number(prod.sizeStock?.[storeSizeFilter] || 0) > 0) {
         targetSize = storeSizeFilter;
+      } else if (
+        activeCustomer?.preferredSize &&
+        Number(prod.sizeStock?.[activeCustomer.preferredSize] || 0) > 0
+      ) {
+        targetSize = activeCustomer.preferredSize;
       } else {
         targetSize = sizes.find((sz) => Number(prod.sizeStock?.[sz] || 0) > 0) || 'L';
       }
@@ -892,7 +1357,9 @@ export default function App() {
     const existingIdx = cart.findIndex((c) => c.id === prod.id && c.size === size);
     if (existingIdx > -1) {
       if (cart[existingIdx].qty >= available) {
-        setQuickViewNotice(`You already have all ${available} available units of Size ${size} in your bag.`);
+        setQuickViewNotice(
+          `You already have all ${available} available units of Size ${size} in your bag.`
+        );
         return;
       }
       const nextCart = [...cart];
@@ -1051,20 +1518,23 @@ export default function App() {
   };
 
   // Financial & P&L Calculations
-  const onlineMerch = state.orders.reduce((s, o) => s + Number(o.subtotal || 0), 0);
+  const nonCancelledOrders = state.orders.filter(
+    (o) => (o.fulfillmentStatus || 'Unfulfilled') !== 'Cancelled'
+  );
+  const onlineMerch = nonCancelledOrders.reduce((s, o) => s + Number(o.subtotal || 0), 0);
   const manualRev = state.pnlAdjustments
     .filter((a) => a.type === 'revenue')
     .reduce((s, a) => s + Number(a.amount || 0), 0);
   const manualDed = state.pnlAdjustments
     .filter((a) => a.type === 'deduction')
     .reduce((s, a) => s + Number(a.amount || 0), 0);
-  const discounts = state.orders.reduce((s, o) => s + Number(o.discount || 0), 0);
-  const shipCollected = state.orders.reduce((s, o) => s + Number(o.shippingCollected || 0), 0);
+  const discounts = nonCancelledOrders.reduce((s, o) => s + Number(o.discount || 0), 0);
+  const shipCollected = nonCancelledOrders.reduce((s, o) => s + Number(o.shippingCollected || 0), 0);
   const grossReceipts = onlineMerch - discounts + shipCollected + manualRev;
 
-  const totalCogs = state.orders.reduce((s, o) => s + Number(o.cogs || 0), 0);
-  const totalLabels = state.orders.reduce((s, o) => s + Number(o.labelCost || 0), 0);
-  const totalFees = state.orders.reduce((s, o) => s + Number(o.fee || 0), 0);
+  const totalCogs = nonCancelledOrders.reduce((s, o) => s + Number(o.cogs || 0), 0);
+  const totalLabels = nonCancelledOrders.reduce((s, o) => s + Number(o.labelCost || 0), 0);
+  const totalFees = nonCancelledOrders.reduce((s, o) => s + Number(o.fee || 0), 0);
   const grossProfit = grossReceipts - totalCogs - totalLabels - totalFees;
 
   const totalPayroll = employees.reduce((s, emp) => s + getEmployeePayout(emp), 0);
@@ -1203,13 +1673,16 @@ export default function App() {
     const cogs = cart.reduce((s, i) => s + i.unitCost * i.qty, 0);
     const fee = Number((cartTotal * 0.029 + 0.3).toFixed(2));
     const id = `SG-${Math.floor(2042 + Math.random() * 899)}`;
+    const normalizedEmail = checkoutForm.email.trim().toLowerCase();
+    const trimmedName = checkoutForm.name.trim();
+    const trimmedAddr = checkoutForm.address.trim() || 'Harrisburg, PA 17112';
 
     const newOrder = {
       id,
       date: new Date().toISOString().slice(0, 10),
-      customerName: checkoutForm.name.trim(),
-      customerEmail: checkoutForm.email.trim(),
-      address: checkoutForm.address.trim() || 'Harrisburg, PA 17112',
+      customerName: trimmedName,
+      customerEmail: normalizedEmail,
+      address: trimmedAddr,
       items: cart.map(({ id: itemId, name, size, qty, price, unitCost }) => ({
         id: itemId,
         name,
@@ -1252,10 +1725,23 @@ export default function App() {
     setAppliedPromo(null);
     setPromoInput('');
     setCheckoutForm({ name: '', email: '', address: '' });
-    setLastPlacedOrder({ id, email: newOrder.customerEmail });
+    setLastPlacedOrder({ id, email: normalizedEmail });
     setOrderBanner(
       `Order ${id} ($${cartTotal.toFixed(2)}) confirmed! Track it anytime with Track Order or open Behind the Scenes (CFO Suite) to fulfill it.`
     );
+
+    const alreadyHasAccount = customers.some(
+      (c) => c.email.toLowerCase() === normalizedEmail
+    );
+    if (!alreadyHasAccount) {
+      setPostOrderAccountPrompt({
+        name: trimmedName,
+        email: normalizedEmail,
+        address: trimmedAddr,
+      });
+    } else {
+      setPostOrderAccountPrompt(null);
+    }
   };
 
   const activeEmployeeCount = employees.filter((e) => e.active).length;
@@ -1366,6 +1852,33 @@ export default function App() {
               Behind the Scenes (CFO Suite)
             </button>
 
+            {mode === 'cfo' && (
+              <div className="inline-flex items-center border border-stone-700 bg-stone-900 p-0.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => switchStaffRole('owner')}
+                  className={`cursor-pointer px-2.5 py-1 font-bold uppercase tracking-wider transition ${
+                    state.staffRole === 'owner'
+                      ? 'bg-amber-600 text-white'
+                      : 'text-stone-300 hover:text-white'
+                  }`}
+                >
+                  Owner
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchStaffRole('staff')}
+                  className={`cursor-pointer px-2.5 py-1 font-bold uppercase tracking-wider transition ${
+                    state.staffRole === 'staff'
+                      ? 'bg-[#F6F4EF] text-[#1C1917]'
+                      : 'text-stone-300 hover:text-white'
+                  }`}
+                >
+                  Staff View
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={resetDemo}
@@ -1402,8 +1915,8 @@ export default function App() {
                 </span>
               </div>
 
-              <div className="flex flex-1 flex-wrap items-center justify-end gap-2.5 sm:max-w-xl">
-                <div className="relative min-w-[200px] flex-1">
+              <div className="flex flex-1 flex-wrap items-center justify-end gap-2 sm:max-w-2xl">
+                <div className="relative min-w-[180px] flex-1">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
                   <input
                     ref={storeSearchRef}
@@ -1433,11 +1946,20 @@ export default function App() {
 
                 <button
                   type="button"
+                  onClick={() => openCustomerPortal('orders')}
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border border-stone-400 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] transition hover:border-[#1C1917]"
+                >
+                  <User className="h-3.5 w-3.5" />
+                  <span>{activeCustomer ? activeCustomer.name.split(' ')[0] : 'My Account'}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => {
                     setTrackResult(null);
                     setTrackModalOpen(true);
                   }}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border border-stone-400 bg-white px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] transition hover:border-[#1C1917]"
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border border-stone-400 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] transition hover:border-[#1C1917]"
                 >
                   <Truck className="h-3.5 w-3.5" />
                   <span>Track Order</span>
@@ -1467,8 +1989,8 @@ export default function App() {
               </div>
               <div className="border-l border-stone-400 pl-6 lg:col-span-5">
                 <p className="text-sm leading-relaxed text-stone-700">
-                  Search any garment, filter by category or available size, and sort across the full catalog below—or switch to{' '}
-                  <strong>Behind the Scenes (CFO Suite)</strong> to manage shifts, overtime alerts, and live P&amp;L.
+                  Save items to your wishlist, manage addresses &amp; fit size in <strong>My Account</strong>, or switch to{' '}
+                  <strong>Behind the Scenes (CFO Suite)</strong> to test Owner vs. Staff role permissions and live P&amp;L.
                 </p>
               </div>
             </div>
@@ -1636,7 +2158,23 @@ export default function App() {
                       <div>
                         <div className="flex items-center justify-between border-b border-stone-300 pb-4 text-xs uppercase tracking-widest text-stone-600">
                           <span>01 &bull; {spotlightFeatured.badge}</span>
-                          <span>{totalUnitsForProduct(spotlightFeatured)} units</span>
+                          <div className="flex items-center gap-2">
+                            <span>{totalUnitsForProduct(spotlightFeatured)} units</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleSavedProduct(spotlightFeatured.id)}
+                              aria-label="Save item"
+                              className="cursor-pointer text-stone-600 hover:text-amber-800"
+                            >
+                              <Heart
+                                className={`h-4 w-4 ${
+                                  activeCustomer?.savedIds?.includes(spotlightFeatured.id)
+                                    ? 'fill-amber-800 text-amber-800'
+                                    : ''
+                                }`}
+                              />
+                            </button>
+                          </div>
                         </div>
 
                         {spotlightFeatured.image ? (
@@ -1731,7 +2269,23 @@ export default function App() {
                                   <span>
                                     0{idx + 2} &bull; {prod.badge}
                                   </span>
-                                  <span className="text-amber-800">{units} in stock</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-amber-800">{units} in stock</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSavedProduct(prod.id)}
+                                      aria-label="Save item"
+                                      className="cursor-pointer text-stone-500 hover:text-amber-800"
+                                    >
+                                      <Heart
+                                        className={`h-3.5 w-3.5 ${
+                                          activeCustomer?.savedIds?.includes(prod.id)
+                                            ? 'fill-amber-800 text-amber-800'
+                                            : ''
+                                        }`}
+                                      />
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="mt-2 flex items-baseline justify-between gap-4">
                                   <h2 className="font-serif text-xl text-[#1C1917]">{prod.name}</h2>
@@ -1808,9 +2362,25 @@ export default function App() {
                             <div>
                               <div className="flex items-center justify-between text-[11px] uppercase tracking-widest text-stone-500">
                                 <span>{prod.badge}</span>
-                                <span className="font-semibold text-amber-800">
-                                  {units} in stock
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-amber-800">
+                                    {units} in stock
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSavedProduct(prod.id)}
+                                    aria-label="Save item"
+                                    className="cursor-pointer text-stone-500 hover:text-amber-800"
+                                  >
+                                    <Heart
+                                      className={`h-3.5 w-3.5 ${
+                                        activeCustomer?.savedIds?.includes(prod.id)
+                                          ? 'fill-amber-800 text-amber-800'
+                                          : ''
+                                      }`}
+                                    />
+                                  </button>
+                                </div>
                               </div>
 
                               {prod.image ? (
@@ -1952,7 +2522,27 @@ export default function App() {
             </div>
           )}
 
-          {overtimeAlerts.length > 0 && (
+          {isStaffView && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border border-stone-400 bg-white px-4 py-3 text-xs">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-amber-800" />
+                <span>
+                  <strong>Restricted Staff View ({state.staffSignedInName}):</strong> Orders,
+                  Inventory Stock &amp; Shift Logs are active. Financial P&amp;L, profit margins,
+                  expenses &amp; promo management are hidden.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => switchStaffRole('owner')}
+                className="cursor-pointer bg-[#1C1917] px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-[#F6F4EF]"
+              >
+                Switch to Owner
+              </button>
+            </div>
+          )}
+
+          {!isStaffView && overtimeAlerts.length > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-2 border-amber-600 bg-amber-50 px-4 py-3 text-xs text-amber-950">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-amber-800" />
@@ -2145,72 +2735,73 @@ export default function App() {
                       </div>
                     )}
 
-                    {(adminOmnisearchResults.expenses.length > 0 ||
-                      adminOmnisearchResults.promos.length > 0 ||
-                      adminOmnisearchResults.adjustments.length > 0) && (
-                      <div>
-                        <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
-                          <Tag className="h-3.5 w-3.5" />
-                          Expenses, Promos &amp; Ledger Entries
-                        </p>
-                        <div className="space-y-1.5">
-                          {adminOmnisearchResults.expenses.map((ex) => (
-                            <div
-                              key={ex.id}
-                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
-                            >
-                              <span>
-                                <strong>Expense:</strong> {ex.vendor} ({ex.category}) &bull; -$
-                                {Number(ex.amount).toFixed(2)}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => jumpToAdminRecord('expenses', ex.id)}
-                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                    {!isStaffView &&
+                      (adminOmnisearchResults.expenses.length > 0 ||
+                        adminOmnisearchResults.promos.length > 0 ||
+                        adminOmnisearchResults.adjustments.length > 0) && (
+                        <div>
+                          <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                            <Tag className="h-3.5 w-3.5" />
+                            Expenses, Promos &amp; Ledger Entries
+                          </p>
+                          <div className="space-y-1.5">
+                            {adminOmnisearchResults.expenses.map((ex) => (
+                              <div
+                                key={ex.id}
+                                className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
                               >
-                                Go to Expenses
-                              </button>
-                            </div>
-                          ))}
-                          {adminOmnisearchResults.promos.map((pr) => (
-                            <div
-                              key={pr.id}
-                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
-                            >
-                              <span>
-                                <strong>Promo Code:</strong> {pr.code} (
-                                {pr.type === 'percent' ? `${pr.value}% Off` : `$${pr.value} Off`})
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => jumpToAdminRecord('promos', pr.id)}
-                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                                <span>
+                                  <strong>Expense:</strong> {ex.vendor} ({ex.category}) &bull; -$
+                                  {Number(ex.amount).toFixed(2)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToAdminRecord('expenses', ex.id)}
+                                  className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                                >
+                                  Go to Expenses
+                                </button>
+                              </div>
+                            ))}
+                            {adminOmnisearchResults.promos.map((pr) => (
+                              <div
+                                key={pr.id}
+                                className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
                               >
-                                Go to Promos
-                              </button>
-                            </div>
-                          ))}
-                          {adminOmnisearchResults.adjustments.map((adj) => (
-                            <div
-                              key={adj.id}
-                              className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
-                            >
-                              <span>
-                                <strong>P&amp;L Entry:</strong> {adj.title} ($
-                                {Number(adj.amount).toFixed(2)})
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => jumpToAdminRecord('pnl', adj.id)}
-                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                                <span>
+                                  <strong>Promo Code:</strong> {pr.code} (
+                                  {pr.type === 'percent' ? `${pr.value}% Off` : `$${pr.value} Off`})
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToAdminRecord('promos', pr.id)}
+                                  className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                                >
+                                  Go to Promos
+                                </button>
+                              </div>
+                            ))}
+                            {adminOmnisearchResults.adjustments.map((adj) => (
+                              <div
+                                key={adj.id}
+                                className="flex items-center justify-between border border-stone-300 bg-white px-3 py-2 text-xs"
                               >
-                                Go to P&amp;L
-                              </button>
-                            </div>
-                          ))}
+                                <span>
+                                  <strong>P&amp;L Entry:</strong> {adj.title} ($
+                                  {Number(adj.amount).toFixed(2)})
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToAdminRecord('pnl', adj.id)}
+                                  className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF]"
+                                >
+                                  Go to P&amp;L
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
                   </div>
                 )}
               </div>
@@ -2227,103 +2818,116 @@ export default function App() {
               </h1>
             </div>
 
-            <button
-              type="button"
-              onClick={exportAccountingCSV}
-              className="inline-flex cursor-pointer items-center gap-2 border border-[#1C1917] bg-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:bg-stone-100"
-            >
-              <Download className="h-4 w-4" />
-              Export Full CPA CSV
-            </button>
+            {!isStaffView && (
+              <button
+                type="button"
+                onClick={exportAccountingCSV}
+                className="inline-flex cursor-pointer items-center gap-2 border border-[#1C1917] bg-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:bg-stone-100"
+              >
+                <Download className="h-4 w-4" />
+                Export Full CPA CSV
+              </button>
+            )}
           </div>
 
-          <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-            <div className="border border-stone-300 bg-white/85 p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                Gross Receipts
-              </span>
-              <p className="mt-1 text-xl font-bold text-[#1C1917]">${grossReceipts.toFixed(2)}</p>
-              <p className="mt-1 text-[11px] text-stone-500">{state.orders.length} orders + pop-up</p>
-            </div>
+          {!isStaffView && (
+            <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              <div className="border border-stone-300 bg-white/85 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                  Gross Receipts
+                </span>
+                <p className="mt-1 text-xl font-bold text-[#1C1917]">${grossReceipts.toFixed(2)}</p>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  {nonCancelledOrders.length} active orders + pop-up
+                </p>
+              </div>
 
-            <div className="border-2 border-amber-700 bg-white p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                True Net Profit
-              </span>
-              <p className="mt-1 text-xl font-bold text-amber-800">${trueNetProfit.toFixed(2)}</p>
-              <p className="mt-1 text-[11px] text-stone-600">{netMarginPct.toFixed(1)}% net margin</p>
-            </div>
+              <div className="border-2 border-amber-700 bg-white p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                  True Net Profit
+                </span>
+                <p className="mt-1 text-xl font-bold text-amber-800">${trueNetProfit.toFixed(2)}</p>
+                <p className="mt-1 text-[11px] text-stone-600">{netMarginPct.toFixed(1)}% net margin</p>
+              </div>
 
-            <div className="border border-stone-300 bg-white/85 p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                Active Payroll
-              </span>
-              <p className="mt-1 text-xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
-              <p className="mt-1 text-[11px] text-stone-500">
-                {laborPct.toFixed(1)}% of revenue ({activeEmployeeCount} staff)
-              </p>
-            </div>
+              <div className="border border-stone-300 bg-white/85 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                  Active Payroll
+                </span>
+                <p className="mt-1 text-xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  {laborPct.toFixed(1)}% of revenue ({activeEmployeeCount} staff)
+                </p>
+              </div>
 
-            <div className="border border-stone-300 bg-white/85 p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                COGS &amp; Overhead
-              </span>
-              <p className="mt-1 text-xl font-bold text-[#1C1917]">
-                ${(totalCogs + totalLabels + totalFees + totalOverhead).toFixed(2)}
-              </p>
-              <p className="mt-1 text-[11px] text-stone-500">
-                COGS ${totalCogs.toFixed(0)} &bull; Ops ${totalOverhead.toFixed(0)}
-              </p>
-            </div>
+              <div className="border border-stone-300 bg-white/85 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                  COGS &amp; Overhead
+                </span>
+                <p className="mt-1 text-xl font-bold text-[#1C1917]">
+                  ${(totalCogs + totalLabels + totalFees + totalOverhead).toFixed(2)}
+                </p>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  COGS ${totalCogs.toFixed(0)} &bull; Ops ${totalOverhead.toFixed(0)}
+                </p>
+              </div>
 
-            <div className="border border-stone-300 bg-white/85 p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                Stock Retail Value
-              </span>
-              <p className="mt-1 text-xl font-bold text-[#1C1917]">${stockRetailVal.toFixed(2)}</p>
-              <p className="mt-1 text-[11px] text-stone-500">${stockCostVal.toFixed(2)} in blanks</p>
-            </div>
+              <div className="border border-stone-300 bg-white/85 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                  Stock Retail Value
+                </span>
+                <p className="mt-1 text-xl font-bold text-[#1C1917]">${stockRetailVal.toFixed(2)}</p>
+                <p className="mt-1 text-[11px] text-stone-500">${stockCostVal.toFixed(2)} in blanks</p>
+              </div>
 
-            <div className="border border-stone-300 bg-white/85 p-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                Safe Owner Draw
-              </span>
-              <p className="mt-1 text-xl font-bold text-[#1C1917]">
-                ${(Math.max(0, trueNetProfit) * (state.budgets.owner / 100)).toFixed(2)}
-              </p>
-              <p className="mt-1 text-[11px] text-stone-500">{state.budgets.owner}% Profit-First</p>
+              <div className="border border-stone-300 bg-white/85 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                  Safe Owner Draw
+                </span>
+                <p className="mt-1 text-xl font-bold text-[#1C1917]">
+                  ${(Math.max(0, trueNetProfit) * (state.budgets.owner / 100)).toFixed(2)}
+                </p>
+                <p className="mt-1 text-[11px] text-stone-500">{state.budgets.owner}% Profit-First</p>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="mb-6 flex flex-wrap gap-2 border-b border-stone-300 pb-4">
             {[
-              { id: 'pnl', label: 'P&L & Profit-First' },
-              { id: 'employees', label: `Team & Payroll (${activeEmployeeCount} Active)` },
+              { id: 'pnl', label: 'P&L & Profit-First', ownerOnly: true },
+              { id: 'employees', label: `Team & Payroll (${activeEmployeeCount} Active)`, ownerOnly: false },
               {
                 id: 'orders',
                 label: `Orders & Fulfillment (${unfulfilledOrdersCount} Open)`,
+                ownerOnly: false,
               },
-              { id: 'inventory', label: `Inventory & SKU Margins (${state.products.length})` },
-              { id: 'expenses', label: `Expenses (${state.expenses.length})` },
-              { id: 'promos', label: `Promo Codes (${promos.length})` },
-            ].map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => updateNavigation('cfo', t.id)}
-                className={`cursor-pointer px-4 py-2 text-xs font-semibold uppercase tracking-wider transition ${
-                  cfoTab === t.id
-                    ? 'bg-[#1C1917] text-[#F6F4EF]'
-                    : 'border border-stone-300 bg-white/75 text-stone-700 hover:border-stone-500'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+              {
+                id: 'inventory',
+                label: `Inventory & ${isStaffView ? 'Stock' : 'SKU Margins'} (${state.products.length})`,
+                ownerOnly: false,
+              },
+              { id: 'expenses', label: `Expenses (${state.expenses.length})`, ownerOnly: true },
+              { id: 'promos', label: `Promo Codes (${promos.length})`, ownerOnly: true },
+            ]
+              .filter((t) => !(isStaffView && t.ownerOnly))
+              .map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => updateNavigation('cfo', t.id)}
+                  className={`cursor-pointer px-4 py-2 text-xs font-semibold uppercase tracking-wider transition ${
+                    effectiveCfoTab === t.id
+                      ? 'bg-[#1C1917] text-[#F6F4EF]'
+                      : 'border border-stone-300 bg-white/75 text-stone-700 hover:border-stone-500'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
           </div>
 
           {/* TAB 1: EDITABLE P&L + PROFIT-FIRST BUCKETS */}
-          {cfoTab === 'pnl' && (
+          {!isStaffView && effectiveCfoTab === 'pnl' && (
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="border border-stone-300 bg-white/90 p-6 lg:col-span-7">
                 <h2 className="font-serif text-xl font-normal text-[#1C1917]">
@@ -2606,421 +3210,425 @@ export default function App() {
           )}
 
           {/* TAB 2: TEAM, OVERTIME POLICY, UNIFORM ROSTER & SHIFT LOGS */}
-          {cfoTab === 'employees' && (
+          {effectiveCfoTab === 'employees' && (
             <div className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-4">
-                <div className="border border-stone-300 bg-white/90 p-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                    Active Roster
-                  </span>
-                  <p className="mt-1 text-2xl font-bold text-[#1C1917]">
-                    {activeEmployeeCount}{' '}
-                    <span className="text-xs font-normal text-stone-500">
-                      / {employees.length} total
-                    </span>
-                  </p>
-                </div>
-                <div className="border border-stone-300 bg-white/90 p-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                    Logged Shift Hours
-                  </span>
-                  <p className="mt-1 text-2xl font-bold text-[#1C1917]">{totalLoggedHours} hrs</p>
-                </div>
-                <div className="border border-stone-300 bg-white/90 p-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                    Period Payroll Expense
-                  </span>
-                  <p className="mt-1 text-2xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
-                </div>
-                <div className="border border-stone-300 bg-white/90 p-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                    Payroll % of Revenue
-                  </span>
-                  <p className="mt-1 text-2xl font-bold text-amber-800">{laborPct.toFixed(1)}%</p>
-                </div>
-              </div>
-
-              <div className="border border-stone-300 bg-white/90 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
-                      Overtime Policy &amp; Alerts
-                    </span>
-                    <h3 className="font-serif text-lg text-[#1C1917]">
-                      Overtime Threshold ({overtimeRule.threshold}h / {overtimeRule.basis} @{' '}
-                      {overtimeRule.multiplier}×)
-                    </h3>
+              {!isStaffView && (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-4">
+                    <div className="border border-stone-300 bg-white/90 p-4">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Active Roster
+                      </span>
+                      <p className="mt-1 text-2xl font-bold text-[#1C1917]">
+                        {activeEmployeeCount}{' '}
+                        <span className="text-xs font-normal text-stone-500">
+                          / {employees.length} total
+                        </span>
+                      </p>
+                    </div>
+                    <div className="border border-stone-300 bg-white/90 p-4">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Logged Shift Hours
+                      </span>
+                      <p className="mt-1 text-2xl font-bold text-[#1C1917]">{totalLoggedHours} hrs</p>
+                    </div>
+                    <div className="border border-stone-300 bg-white/90 p-4">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Period Payroll Expense
+                      </span>
+                      <p className="mt-1 text-2xl font-bold text-rose-700">${totalPayroll.toFixed(2)}</p>
+                    </div>
+                    <div className="border border-stone-300 bg-white/90 p-4">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Payroll % of Revenue
+                      </span>
+                      <p className="mt-1 text-2xl font-bold text-amber-800">{laborPct.toFixed(1)}%</p>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <select
-                      value={overtimeRule.basis}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          overtimeRule: { ...prev.overtimeRule, basis: e.target.value },
-                        }))
-                      }
-                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+
+                  <div className="border border-stone-300 bg-white/90 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                          Overtime Policy &amp; Alerts
+                        </span>
+                        <h3 className="font-serif text-lg text-[#1C1917]">
+                          Overtime Threshold ({overtimeRule.threshold}h / {overtimeRule.basis} @{' '}
+                          {overtimeRule.multiplier}×)
+                        </h3>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <select
+                          value={overtimeRule.basis}
+                          onChange={(e) =>
+                            setState((prev) => ({
+                              ...prev,
+                              overtimeRule: { ...prev.overtimeRule, basis: e.target.value },
+                            }))
+                          }
+                          className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                        >
+                          <option value="week">Per Week</option>
+                          <option value="day">Per Day</option>
+                        </select>
+                        <input
+                          type="number"
+                          min="1"
+                          step="0.5"
+                          value={overtimeRule.threshold}
+                          onChange={(e) =>
+                            setState((prev) => ({
+                              ...prev,
+                              overtimeRule: {
+                                ...prev.overtimeRule,
+                                threshold: Math.max(1, parseFloat(e.target.value || '40')),
+                              },
+                            }))
+                          }
+                          className="w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5 text-xs font-bold"
+                        />
+                        <select
+                          value={overtimeRule.multiplier}
+                          onChange={(e) =>
+                            setState((prev) => ({
+                              ...prev,
+                              overtimeRule: {
+                                ...prev.overtimeRule,
+                                multiplier: parseFloat(e.target.value || '1.5'),
+                              },
+                            }))
+                          }
+                          className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                        >
+                          <option value={1.5}>1.5× Overtime</option>
+                          <option value={1.25}>1.25× Overtime</option>
+                          <option value={2}>2.0× Double-Time</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border border-stone-300 bg-white/90 p-6">
+                    <div className="flex flex-wrap items-end justify-between gap-4">
+                      <div>
+                        <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
+                          <Users className="h-5 w-5 text-amber-800" />
+                          Active Roster &amp; Live Payroll
+                        </h2>
+                        <p className="mt-1 text-xs text-stone-600">
+                          Uniform roster slots for rates, hours, reset, period pay, and pay stubs.
+                        </p>
+                      </div>
+
+                      <div className="relative w-full sm:w-64">
+                        <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
+                        <input
+                          type="text"
+                          value={employeeSearch}
+                          onChange={(e) => setEmployeeSearch(e.target.value)}
+                          placeholder="Search employees or roles..."
+                          className="w-full border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
+                        />
+                        {employeeSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setEmployeeSearch('')}
+                            className="absolute right-2 top-2 cursor-pointer text-stone-500"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        setEmpFieldError({ field: '', message: '' });
+                        if (!newEmp.name.trim()) {
+                          setEmpFieldError({ field: 'name', message: 'Full Name is required.' });
+                          empNameInputRef.current?.focus();
+                          return;
+                        }
+                        if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
+                          setEmpFieldError({
+                            field: 'rate',
+                            message: 'Enter a valid pay rate ($0 or higher).',
+                          });
+                          empRateInputRef.current?.focus();
+                          return;
+                        }
+                        setState({
+                          ...state,
+                          employees: [
+                            ...employees,
+                            {
+                              id: `emp-${Date.now()}`,
+                              name: newEmp.name.trim(),
+                              role: newEmp.role.trim() || 'Studio Associate',
+                              department: newEmp.department,
+                              accessLevel: newEmp.accessLevel,
+                              payType: newEmp.payType,
+                              rate: parseFloat(newEmp.rate) || 0,
+                              hours: newEmp.payType === 'hourly' ? parseFloat(newEmp.hours) || 0 : 1,
+                              active: true,
+                            },
+                          ],
+                        });
+                        setNewEmp({
+                          name: '',
+                          role: '',
+                          department: 'Production & DTF',
+                          accessLevel: 'Fulfillment & Stock',
+                          payType: 'hourly',
+                          rate: '',
+                          hours: '8',
+                        });
+                      }}
+                      className="mt-5 grid gap-2.5 border border-stone-200 bg-[#F6F4EF] p-4 sm:grid-cols-12"
                     >
-                      <option value="week">Per Week</option>
-                      <option value="day">Per Day</option>
-                    </select>
-                    <input
-                      type="number"
-                      min="1"
-                      step="0.5"
-                      value={overtimeRule.threshold}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          overtimeRule: {
-                            ...prev.overtimeRule,
-                            threshold: Math.max(1, parseFloat(e.target.value || '40')),
-                          },
-                        }))
-                      }
-                      className="w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5 text-xs font-bold"
-                    />
-                    <select
-                      value={overtimeRule.multiplier}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          overtimeRule: {
-                            ...prev.overtimeRule,
-                            multiplier: parseFloat(e.target.value || '1.5'),
-                          },
-                        }))
-                      }
-                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
-                    >
-                      <option value={1.5}>1.5× Overtime</option>
-                      <option value={1.25}>1.25× Overtime</option>
-                      <option value={2}>2.0× Double-Time</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="border border-stone-300 bg-white/90 p-6">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
-                      <Users className="h-5 w-5 text-amber-800" />
-                      Active Roster &amp; Live Payroll
-                    </h2>
-                    <p className="mt-1 text-xs text-stone-600">
-                      Uniform roster slots for rates, hours, reset, period pay, and pay stubs.
-                    </p>
-                  </div>
-
-                  <div className="relative w-full sm:w-64">
-                    <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
-                    <input
-                      type="text"
-                      value={employeeSearch}
-                      onChange={(e) => setEmployeeSearch(e.target.value)}
-                      placeholder="Search employees or roles..."
-                      className="w-full border border-stone-300 bg-[#F6F4EF] py-1.5 pl-8 pr-7 text-xs focus:border-[#1C1917] focus:outline-none"
-                    />
-                    {employeeSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setEmployeeSearch('')}
-                        className="absolute right-2 top-2 cursor-pointer text-stone-500"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    setEmpFieldError({ field: '', message: '' });
-                    if (!newEmp.name.trim()) {
-                      setEmpFieldError({ field: 'name', message: 'Full Name is required.' });
-                      empNameInputRef.current?.focus();
-                      return;
-                    }
-                    if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
-                      setEmpFieldError({
-                        field: 'rate',
-                        message: 'Enter a valid pay rate ($0 or higher).',
-                      });
-                      empRateInputRef.current?.focus();
-                      return;
-                    }
-                    setState({
-                      ...state,
-                      employees: [
-                        ...employees,
-                        {
-                          id: `emp-${Date.now()}`,
-                          name: newEmp.name.trim(),
-                          role: newEmp.role.trim() || 'Studio Associate',
-                          department: newEmp.department,
-                          accessLevel: newEmp.accessLevel,
-                          payType: newEmp.payType,
-                          rate: parseFloat(newEmp.rate) || 0,
-                          hours: newEmp.payType === 'hourly' ? parseFloat(newEmp.hours) || 0 : 1,
-                          active: true,
-                        },
-                      ],
-                    });
-                    setNewEmp({
-                      name: '',
-                      role: '',
-                      department: 'Production & DTF',
-                      accessLevel: 'Fulfillment & Stock',
-                      payType: 'hourly',
-                      rate: '',
-                      hours: '8',
-                    });
-                  }}
-                  className="mt-5 grid gap-2.5 border border-stone-200 bg-[#F6F4EF] p-4 sm:grid-cols-12"
-                >
-                  <div className="sm:col-span-3">
-                    <input
-                      ref={empNameInputRef}
-                      type="text"
-                      placeholder="Full Name"
-                      value={newEmp.name}
-                      onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
-                      className={`w-full border bg-white px-3 py-2 text-xs ${
-                        empFieldError.field === 'name'
-                          ? 'border-rose-600 ring-2 ring-rose-200'
-                          : 'border-stone-300'
-                      }`}
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Job Title (e.g. Print Tech)"
-                    value={newEmp.role}
-                    onChange={(e) => setNewEmp({ ...newEmp, role: e.target.value })}
-                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-2"
-                  />
-                  <select
-                    value={newEmp.department}
-                    onChange={(e) => setNewEmp({ ...newEmp, department: e.target.value })}
-                    className="border border-stone-300 bg-white px-2.5 py-2 text-xs sm:col-span-2"
-                  >
-                    <option>Production &amp; DTF</option>
-                    <option>Fulfillment &amp; Ops</option>
-                    <option>Retail &amp; Pop-Up</option>
-                    <option>Creative &amp; Media</option>
-                  </select>
-                  <select
-                    value={newEmp.payType}
-                    onChange={(e) => setNewEmp({ ...newEmp, payType: e.target.value })}
-                    className="border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold sm:col-span-2"
-                  >
-                    <option value="hourly">Hourly ($/hr)</option>
-                    <option value="flat">Flat Stipend ($)</option>
-                  </select>
-                  <div className="flex gap-1.5 sm:col-span-2">
-                    <input
-                      ref={empRateInputRef}
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      placeholder={newEmp.payType === 'hourly' ? '$/hr' : 'Flat $'}
-                      value={newEmp.rate}
-                      onChange={(e) => setNewEmp({ ...newEmp, rate: e.target.value })}
-                      className={`w-full border bg-white px-2.5 py-2 text-xs ${
-                        empFieldError.field === 'rate'
-                          ? 'border-rose-600 ring-2 ring-rose-200'
-                          : 'border-stone-300'
-                      }`}
-                    />
-                    {newEmp.payType === 'hourly' && (
+                      <div className="sm:col-span-3">
+                        <input
+                          ref={empNameInputRef}
+                          type="text"
+                          placeholder="Full Name"
+                          value={newEmp.name}
+                          onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
+                          className={`w-full border bg-white px-3 py-2 text-xs ${
+                            empFieldError.field === 'name'
+                              ? 'border-rose-600 ring-2 ring-rose-200'
+                              : 'border-stone-300'
+                          }`}
+                        />
+                      </div>
                       <input
-                        type="number"
+                        type="text"
                         required
-                        min="0"
-                        step="0.5"
-                        placeholder="Hrs"
-                        value={newEmp.hours}
-                        onChange={(e) => setNewEmp({ ...newEmp, hours: e.target.value })}
-                        className="w-16 border border-stone-300 bg-white px-2 py-2 text-xs"
+                        placeholder="Job Title (e.g. Print Tech)"
+                        value={newEmp.role}
+                        onChange={(e) => setNewEmp({ ...newEmp, role: e.target.value })}
+                        className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-2"
                       />
-                    )}
-                  </div>
-                  <button
-                    type="submit"
-                    className="inline-flex cursor-pointer items-center justify-center gap-1 bg-[#1C1917] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800 sm:col-span-1"
-                  >
-                    <UserPlus className="h-3.5 w-3.5" />
-                    Add
-                  </button>
-                  {empFieldError.message && (
-                    <p className="text-xs font-semibold text-rose-700 sm:col-span-12">
-                      {empFieldError.message}
-                    </p>
-                  )}
-                </form>
-
-                <div className="mt-6 space-y-3">
-                  {filteredEmployees.map((emp) => {
-                    const breakdown = getEmployeeBreakdown(emp);
-                    const payout = breakdown.totalPay;
-                    const showReset = emp.payType === 'hourly' && Number(emp.hours || 0) > 0;
-                    return (
-                      <div
-                        key={emp.id}
-                        className={`grid grid-cols-1 items-center gap-4 border p-5 transition lg:grid-cols-12 ${
-                          highlightedId === emp.id
-                            ? 'border-2 border-amber-700 bg-amber-50/50'
-                            : 'border-stone-300 bg-white'
-                        } ${!emp.active ? 'opacity-65' : ''}`}
+                      <select
+                        value={newEmp.department}
+                        onChange={(e) => setNewEmp({ ...newEmp, department: e.target.value })}
+                        className="border border-stone-300 bg-white px-2.5 py-2 text-xs sm:col-span-2"
                       >
-                        <div className="min-w-0 lg:col-span-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <strong className="text-base text-[#1C1917]">{emp.name}</strong>
-                            {breakdown.otHours > 0 && (
-                              <span className="border border-amber-600/40 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
-                                +{breakdown.otHours.toFixed(2)}h OT
-                              </span>
-                            )}
-                            <span className="border border-stone-300 bg-[#F6F4EF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
-                              {emp.department}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-xs text-stone-600">
-                            {emp.role} &bull;{' '}
-                            <span className="inline-flex items-center gap-1 text-stone-500">
-                              <Briefcase className="h-3 w-3" />
-                              {emp.accessLevel}
-                            </span>
-                          </p>
-                        </div>
-
-                        <div className="lg:col-span-2">
-                          <label className="block text-[10px] font-bold uppercase text-stone-500">
-                            {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
-                          </label>
+                        <option>Production &amp; DTF</option>
+                        <option>Fulfillment &amp; Ops</option>
+                        <option>Retail &amp; Pop-Up</option>
+                        <option>Creative &amp; Media</option>
+                      </select>
+                      <select
+                        value={newEmp.payType}
+                        onChange={(e) => setNewEmp({ ...newEmp, payType: e.target.value })}
+                        className="border border-stone-300 bg-white px-2.5 py-2 text-xs font-semibold sm:col-span-2"
+                      >
+                        <option value="hourly">Hourly ($/hr)</option>
+                        <option value="flat">Flat Stipend ($)</option>
+                      </select>
+                      <div className="flex gap-1.5 sm:col-span-2">
+                        <input
+                          ref={empRateInputRef}
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          placeholder={newEmp.payType === 'hourly' ? '$/hr' : 'Flat $'}
+                          value={newEmp.rate}
+                          onChange={(e) => setNewEmp({ ...newEmp, rate: e.target.value })}
+                          className={`w-full border bg-white px-2.5 py-2 text-xs ${
+                            empFieldError.field === 'rate'
+                              ? 'border-rose-600 ring-2 ring-rose-200'
+                              : 'border-stone-300'
+                          }`}
+                        />
+                        {newEmp.payType === 'hourly' && (
                           <input
                             type="number"
+                            required
                             min="0"
                             step="0.5"
-                            value={emp.rate}
-                            onChange={(e) =>
-                              setState({
-                                ...state,
-                                employees: employees.map((item) =>
-                                  item.id === emp.id
-                                    ? { ...item, rate: parseFloat(e.target.value) || 0 }
-                                    : item
-                                ),
-                              })
-                            }
-                            className="mt-1 w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
+                            placeholder="Hrs"
+                            value={newEmp.hours}
+                            onChange={(e) => setNewEmp({ ...newEmp, hours: e.target.value })}
+                            className="w-16 border border-stone-300 bg-white px-2 py-2 text-xs"
                           />
-                        </div>
-
-                        <div className="lg:col-span-2">
-                          {emp.payType === 'hourly' ? (
-                            <>
-                              <label className="block text-[10px] font-bold uppercase text-stone-500">
-                                Shift Hours
-                              </label>
-                              <div className="mt-1 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
-                                <button
-                                  type="button"
-                                  onClick={() => stepEmployeeHours(emp.id, -1)}
-                                  className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
-                                >
-                                  <Minus className="h-3 w-3" />
-                                </button>
-                                <span className="min-w-11 text-center text-xs font-bold">
-                                  {emp.hours}h
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => stepEmployeeHours(emp.id, 1)}
-                                  className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
-                                >
-                                  <Plus className="h-3 w-3" />
-                                </button>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="pt-4 text-xs font-semibold text-stone-600">
-                              Per Project
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="lg:col-span-2 lg:text-right">
-                          <span className="block text-[10px] font-bold uppercase text-stone-500">
-                            Period Pay
-                          </span>
-                          <strong className="text-sm font-bold text-rose-700">
-                            -${payout.toFixed(2)}
-                          </strong>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 lg:col-span-2 lg:justify-end">
-                          {showReset ? (
-                            <button
-                              type="button"
-                              onClick={() => stepEmployeeHours(emp.id, 0)}
-                              className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2 py-1 text-[10px] font-bold uppercase text-[#1C1917] hover:bg-stone-200"
-                            >
-                              Reset Hrs
-                            </button>
-                          ) : (
-                            <span className="inline-block w-14" />
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setState({
-                                ...state,
-                                employees: employees.map((item) =>
-                                  item.id === emp.id ? { ...item, active: !item.active } : item
-                                ),
-                              })
-                            }
-                            className={`cursor-pointer border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${
-                              emp.active
-                                ? 'border-amber-700/40 bg-amber-50 text-amber-900'
-                                : 'border-stone-300 bg-stone-100 text-stone-600'
-                            }`}
-                          >
-                            {emp.active ? 'Active' : 'Off-Cycle'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setPayStubEmpId(emp.id)}
-                            className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
-                          >
-                            Stub
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setState({
-                                ...state,
-                                employees: employees.filter((item) => item.id !== emp.id),
-                              })
-                            }
-                            className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      <button
+                        type="submit"
+                        className="inline-flex cursor-pointer items-center justify-center gap-1 bg-[#1C1917] px-3 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800 sm:col-span-1"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Add
+                      </button>
+                      {empFieldError.message && (
+                        <p className="text-xs font-semibold text-rose-700 sm:col-span-12">
+                          {empFieldError.message}
+                        </p>
+                      )}
+                    </form>
+
+                    <div className="mt-6 space-y-3">
+                      {filteredEmployees.map((emp) => {
+                        const breakdown = getEmployeeBreakdown(emp);
+                        const payout = breakdown.totalPay;
+                        const showReset = emp.payType === 'hourly' && Number(emp.hours || 0) > 0;
+                        return (
+                          <div
+                            key={emp.id}
+                            className={`grid grid-cols-1 items-center gap-4 border p-5 transition lg:grid-cols-12 ${
+                              highlightedId === emp.id
+                                ? 'border-2 border-amber-700 bg-amber-50/50'
+                                : 'border-stone-300 bg-white'
+                            } ${!emp.active ? 'opacity-65' : ''}`}
+                          >
+                            <div className="min-w-0 lg:col-span-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <strong className="text-base text-[#1C1917]">{emp.name}</strong>
+                                {breakdown.otHours > 0 && (
+                                  <span className="border border-amber-600/40 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                                    +{breakdown.otHours.toFixed(2)}h OT
+                                  </span>
+                                )}
+                                <span className="border border-stone-300 bg-[#F6F4EF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
+                                  {emp.department}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-stone-600">
+                                {emp.role} &bull;{' '}
+                                <span className="inline-flex items-center gap-1 text-stone-500">
+                                  <Briefcase className="h-3 w-3" />
+                                  {emp.accessLevel}
+                                </span>
+                              </p>
+                            </div>
+
+                            <div className="lg:col-span-2">
+                              <label className="block text-[10px] font-bold uppercase text-stone-500">
+                                {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={emp.rate}
+                                onChange={(e) =>
+                                  setState({
+                                    ...state,
+                                    employees: employees.map((item) =>
+                                      item.id === emp.id
+                                        ? { ...item, rate: parseFloat(e.target.value) || 0 }
+                                        : item
+                                    ),
+                                  })
+                                }
+                                className="mt-1 w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
+                              />
+                            </div>
+
+                            <div className="lg:col-span-2">
+                              {emp.payType === 'hourly' ? (
+                                <>
+                                  <label className="block text-[10px] font-bold uppercase text-stone-500">
+                                    Shift Hours
+                                  </label>
+                                  <div className="mt-1 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
+                                    <button
+                                      type="button"
+                                      onClick={() => stepEmployeeHours(emp.id, -1)}
+                                      className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </button>
+                                    <span className="min-w-11 text-center text-xs font-bold">
+                                      {emp.hours}h
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => stepEmployeeHours(emp.id, 1)}
+                                      className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="pt-4 text-xs font-semibold text-stone-600">
+                                  Per Project
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="lg:col-span-2 lg:text-right">
+                              <span className="block text-[10px] font-bold uppercase text-stone-500">
+                                Period Pay
+                              </span>
+                              <strong className="text-sm font-bold text-rose-700">
+                                -${payout.toFixed(2)}
+                              </strong>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 lg:col-span-2 lg:justify-end">
+                              {showReset ? (
+                                <button
+                                  type="button"
+                                  onClick={() => stepEmployeeHours(emp.id, 0)}
+                                  className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2 py-1 text-[10px] font-bold uppercase text-[#1C1917] hover:bg-stone-200"
+                                >
+                                  Reset Hrs
+                                </button>
+                              ) : (
+                                <span className="inline-block w-14" />
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setState({
+                                    ...state,
+                                    employees: employees.map((item) =>
+                                      item.id === emp.id ? { ...item, active: !item.active } : item
+                                    ),
+                                  })
+                                }
+                                className={`cursor-pointer border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${
+                                  emp.active
+                                    ? 'border-amber-700/40 bg-amber-50 text-amber-900'
+                                    : 'border-stone-300 bg-stone-100 text-stone-600'
+                                }`}
+                              >
+                                {emp.active ? 'Active' : 'Off-Cycle'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setPayStubEmpId(emp.id)}
+                                className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
+                              >
+                                Stub
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setState({
+                                    ...state,
+                                    employees: employees.filter((item) => item.id !== emp.id),
+                                  })
+                                }
+                                className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="border border-stone-300 bg-white/90 p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3052,7 +3660,7 @@ export default function App() {
                         <th className="py-2.5 px-3">Clock In</th>
                         <th className="py-2.5 px-3">Clock Out</th>
                         <th className="py-2.5 px-3">Hours</th>
-                        <th className="py-2.5 px-3">Pay</th>
+                        {!isStaffView && <th className="py-2.5 px-3">Pay</th>}
                         <th className="py-2.5 px-3">Note</th>
                         <th className="py-2.5 px-3 text-right">Action</th>
                       </tr>
@@ -3065,9 +3673,11 @@ export default function App() {
                           <td className="py-2.5 px-3">{log.clockIn}</td>
                           <td className="py-2.5 px-3">{log.clockOut}</td>
                           <td className="py-2.5 px-3 font-bold">{Number(log.hours).toFixed(2)}h</td>
-                          <td className="py-2.5 px-3 font-semibold text-rose-700">
-                            -${Number(log.earned || 0).toFixed(2)}
-                          </td>
+                          {!isStaffView && (
+                            <td className="py-2.5 px-3 font-semibold text-rose-700">
+                              -${Number(log.earned || 0).toFixed(2)}
+                            </td>
+                          )}
                           <td className="py-2.5 px-3 text-stone-600">{log.note}</td>
                           <td className="py-2.5 px-3 text-right">
                             <button
@@ -3089,11 +3699,11 @@ export default function App() {
           )}
 
           {/* TAB 3: ORDERS, FULFILLMENT & PACKING SLIPS */}
-          {cfoTab === 'orders' && (
+          {effectiveCfoTab === 'orders' && (
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap gap-2">
-                  {['All', 'Unfulfilled', 'Packing', 'Shipped', 'Delivered'].map((st) => (
+                  {['All', 'Unfulfilled', 'Packing', 'Shipped', 'Delivered', 'Cancelled'].map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -3154,9 +3764,11 @@ export default function App() {
                           <span className="border border-stone-300 bg-[#F6F4EF] px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider text-[#1C1917]">
                             {o.fulfillmentStatus || 'Unfulfilled'}
                           </span>
-                          <span className="border border-amber-700/30 bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-900">
-                            Net Profit: +${netOrderProfit.toFixed(2)}
-                          </span>
+                          {!isStaffView && (
+                            <span className="border border-amber-700/30 bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-900">
+                              Net Profit: +${netOrderProfit.toFixed(2)}
+                            </span>
+                          )}
                         </div>
                         <p className="mt-1 text-xs text-stone-600">
                           {o.date} &bull; <strong>{o.customerName}</strong> ({o.customerEmail}) &bull;{' '}
@@ -3165,10 +3777,12 @@ export default function App() {
                       </div>
                       <div className="text-right">
                         <strong className="text-xl">${Number(o.total).toFixed(2)}</strong>
-                        <p className="text-[11px] text-stone-500">
-                          COGS ${Number(o.cogs).toFixed(2)} &bull; Label $
-                          {Number(o.labelCost).toFixed(2)} &bull; Fee ${Number(o.fee).toFixed(2)}
-                        </p>
+                        {!isStaffView && (
+                          <p className="text-[11px] text-stone-500">
+                            COGS ${Number(o.cogs).toFixed(2)} &bull; Label $
+                            {Number(o.labelCost).toFixed(2)} &bull; Fee ${Number(o.fee).toFixed(2)}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -3243,6 +3857,7 @@ export default function App() {
                         <option>Packing</option>
                         <option>Shipped</option>
                         <option>Delivered</option>
+                        <option>Cancelled</option>
                       </select>
 
                       <button
@@ -3261,16 +3876,18 @@ export default function App() {
           )}
 
           {/* TAB 4: INVENTORY, PRODUCT IMAGE UPLOADS & SKU MARGINS */}
-          {cfoTab === 'inventory' && (
+          {effectiveCfoTab === 'inventory' && (
             <div className="space-y-6">
               <div className="border border-stone-300 bg-white/90 p-6">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h2 className="font-serif text-xl font-normal text-[#1C1917]">
-                      SKU Profit Margin Leaderboard, Photos &amp; Live Size Stock
+                      {isStaffView
+                        ? 'Product Photos & Live Size Stock'
+                        : 'SKU Profit Margin Leaderboard, Photos & Live Size Stock'}
                     </h2>
                     <p className="mt-1 text-xs text-stone-600">
-                      Upload or replace product photos, adjust retail prices and unit COGS, or update size quantities below. Storefront listings update immediately.
+                      Upload or replace product photos or update size quantities below. Storefront listings update immediately.
                     </p>
                   </div>
 
@@ -3370,9 +3987,11 @@ export default function App() {
 
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="bg-[#1C1917] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F6F4EF]">
-                                  #{rank + 1} Margin
-                                </span>
+                                {!isStaffView && (
+                                  <span className="bg-[#1C1917] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#F6F4EF]">
+                                    #{rank + 1} Margin
+                                  </span>
+                                )}
                                 <span className="text-xs uppercase tracking-wider text-stone-500">
                                   {p.category} &bull; {units} total units
                                 </span>
@@ -3389,60 +4008,62 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-4">
-                            <div>
-                              <label className="block text-[10px] font-bold uppercase text-stone-500">
-                                Retail ($)
-                              </label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={p.price}
-                                onChange={(e) =>
-                                  setState({
-                                    ...state,
-                                    products: state.products.map((item) =>
-                                      item.id === p.id
-                                        ? { ...item, price: parseFloat(e.target.value) || 0 }
-                                        : item
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-24 border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold"
-                              />
-                            </div>
+                          {!isStaffView && (
+                            <div className="flex flex-wrap items-center gap-4">
+                              <div>
+                                <label className="block text-[10px] font-bold uppercase text-stone-500">
+                                  Retail ($)
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={p.price}
+                                  onChange={(e) =>
+                                    setState({
+                                      ...state,
+                                      products: state.products.map((item) =>
+                                        item.id === p.id
+                                          ? { ...item, price: parseFloat(e.target.value) || 0 }
+                                          : item
+                                      ),
+                                    })
+                                  }
+                                  className="mt-1 w-24 border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold"
+                                />
+                              </div>
 
-                            <div>
-                              <label className="block text-[10px] font-bold uppercase text-stone-500">
-                                Unit COGS ($)
-                              </label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={p.unitCost}
-                                onChange={(e) =>
-                                  setState({
-                                    ...state,
-                                    products: state.products.map((item) =>
-                                      item.id === p.id
-                                        ? { ...item, unitCost: parseFloat(e.target.value) || 0 }
-                                        : item
-                                    ),
-                                  })
-                                }
-                                className="mt-1 w-24 border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold"
-                              />
-                            </div>
+                              <div>
+                                <label className="block text-[10px] font-bold uppercase text-stone-500">
+                                  Unit COGS ($)
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={p.unitCost}
+                                  onChange={(e) =>
+                                    setState({
+                                      ...state,
+                                      products: state.products.map((item) =>
+                                        item.id === p.id
+                                          ? { ...item, unitCost: parseFloat(e.target.value) || 0 }
+                                          : item
+                                      ),
+                                    })
+                                  }
+                                  className="mt-1 w-24 border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold"
+                                />
+                              </div>
 
-                            <div className="min-w-[110px] text-right">
-                              <span className="block text-[10px] font-bold uppercase text-stone-500">
-                                Unit Profit
-                              </span>
-                              <strong className="text-sm font-bold text-amber-800">
-                                +${unitProfit.toFixed(2)} ({margin.toFixed(1)}%)
-                              </strong>
+                              <div className="min-w-[110px] text-right">
+                                <span className="block text-[10px] font-bold uppercase text-stone-500">
+                                  Unit Profit
+                                </span>
+                                <strong className="text-sm font-bold text-amber-800">
+                                  +${unitProfit.toFixed(2)} ({margin.toFixed(1)}%)
+                                </strong>
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
 
                         <div className="mt-4 grid grid-cols-5 gap-2 border-t border-stone-300 pt-3 sm:max-w-md">
@@ -3485,149 +4106,151 @@ export default function App() {
                 </div>
               </div>
 
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!newSku.name.trim()) return;
-                  const created = {
-                    id: `sg-${Date.now()}`,
-                    name: newSku.name.trim(),
-                    category: newSku.category,
-                    badge: newSku.badge.trim() || 'Capsule Drop',
-                    description: newSku.description.trim() || 'Limited capsule release.',
-                    price: parseFloat(newSku.price) || 68,
-                    unitCost: parseFloat(newSku.unitCost) || 20,
-                    image: newSku.image || '',
-                    sizeStock: {
-                      S: Number(newSku.S) || 0,
-                      M: Number(newSku.M) || 0,
-                      L: Number(newSku.L) || 0,
-                      XL: Number(newSku.XL) || 0,
-                      '2XL': Number(newSku['2XL']) || 0,
-                    },
-                  };
-                  setState({ ...state, products: [...state.products, created] });
-                  setNewSku({
-                    name: '',
-                    category: 'Hoodies',
-                    badge: 'Capsule Drop',
-                    description: '',
-                    price: '68',
-                    unitCost: '21',
-                    image: '',
-                    S: 6,
-                    M: 10,
-                    L: 10,
-                    XL: 6,
-                    '2XL': 3,
-                  });
-                }}
-                className="border border-stone-300 bg-white/90 p-6"
-              >
-                <h3 className="font-serif text-lg font-normal text-[#1C1917]">
-                  Publish New Product SKU to Live Storefront
-                </h3>
+              {!isStaffView && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newSku.name.trim()) return;
+                    const created = {
+                      id: `sg-${Date.now()}`,
+                      name: newSku.name.trim(),
+                      category: newSku.category,
+                      badge: newSku.badge.trim() || 'Capsule Drop',
+                      description: newSku.description.trim() || 'Limited capsule release.',
+                      price: parseFloat(newSku.price) || 68,
+                      unitCost: parseFloat(newSku.unitCost) || 20,
+                      image: newSku.image || '',
+                      sizeStock: {
+                        S: Number(newSku.S) || 0,
+                        M: Number(newSku.M) || 0,
+                        L: Number(newSku.L) || 0,
+                        XL: Number(newSku.XL) || 0,
+                        '2XL': Number(newSku['2XL']) || 0,
+                      },
+                    };
+                    setState({ ...state, products: [...state.products, created] });
+                    setNewSku({
+                      name: '',
+                      category: 'Hoodies',
+                      badge: 'Capsule Drop',
+                      description: '',
+                      price: '68',
+                      unitCost: '21',
+                      image: '',
+                      S: 6,
+                      M: 10,
+                      L: 10,
+                      XL: 6,
+                      '2XL': 3,
+                    });
+                  }}
+                  className="border border-stone-300 bg-white/90 p-6"
+                >
+                  <h3 className="font-serif text-lg font-normal text-[#1C1917]">
+                    Publish New Product SKU to Live Storefront
+                  </h3>
 
-                <div className="mt-4 flex flex-wrap items-center gap-4 border border-stone-200 bg-[#F6F4EF] p-4">
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden border border-stone-300 bg-white">
-                    {newSku.image ? (
-                      <img
-                        src={newSku.image}
-                        alt="New product preview"
-                        className="h-full w-full object-cover object-center"
-                      />
-                    ) : (
-                      <ImageIcon className="h-6 w-6 text-stone-400" />
-                    )}
+                  <div className="mt-4 flex flex-wrap items-center gap-4 border border-stone-200 bg-[#F6F4EF] p-4">
+                    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden border border-stone-300 bg-white">
+                      {newSku.image ? (
+                        <img
+                          src={newSku.image}
+                          alt="New product preview"
+                          className="h-full w-full object-cover object-center"
+                        />
+                      ) : (
+                        <ImageIcon className="h-6 w-6 text-stone-400" />
+                      )}
+                    </div>
+                    <div>
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 border border-[#1C1917] bg-white px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:bg-stone-100">
+                        <Upload className="h-3.5 w-3.5" />
+                        <span>{newSku.image ? 'Change Product Photo' : 'Upload Product Photo'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            handleNewSkuImageUpload(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      {newSku.image && (
+                        <button
+                          type="button"
+                          onClick={() => setNewSku((prev) => ({ ...prev, image: '' }))}
+                          className="ml-3 cursor-pointer text-xs font-semibold text-rose-700 hover:underline"
+                        >
+                          Remove Photo
+                        </button>
+                      )}
+                      <p className="mt-1.5 text-xs text-stone-500">
+                        JPG, PNG, or WebP &bull; Automatically optimized for fast storefront loading
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 border border-[#1C1917] bg-white px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] hover:bg-stone-100">
-                      <Upload className="h-3.5 w-3.5" />
-                      <span>{newSku.image ? 'Change Product Photo' : 'Upload Product Photo'}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          handleNewSkuImageUpload(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    {newSku.image && (
-                      <button
-                        type="button"
-                        onClick={() => setNewSku((prev) => ({ ...prev, image: '' }))}
-                        className="ml-3 cursor-pointer text-xs font-semibold text-rose-700 hover:underline"
-                      >
-                        Remove Photo
-                      </button>
-                    )}
-                    <p className="mt-1.5 text-xs text-stone-500">
-                      JPG, PNG, or WebP &bull; Automatically optimized for fast storefront loading
-                    </p>
-                  </div>
-                </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-5">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-5">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Product Name"
+                      value={newSku.name}
+                      onChange={(e) => setNewSku({ ...newSku, name: e.target.value })}
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs sm:col-span-2"
+                    />
+                    <select
+                      value={newSku.category}
+                      onChange={(e) => setNewSku({ ...newSku, category: e.target.value })}
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
+                    >
+                      <option>Hoodies</option>
+                      <option>Tees</option>
+                      <option>Bottoms</option>
+                      <option>Outerwear</option>
+                    </select>
+                    <input
+                      type="number"
+                      required
+                      step="0.01"
+                      placeholder="Retail ($)"
+                      value={newSku.price}
+                      onChange={(e) => setNewSku({ ...newSku, price: e.target.value })}
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
+                    />
+                    <input
+                      type="number"
+                      required
+                      step="0.01"
+                      placeholder="Unit COGS ($)"
+                      value={newSku.unitCost}
+                      onChange={(e) => setNewSku({ ...newSku, unitCost: e.target.value })}
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
+                    />
+                  </div>
                   <input
                     type="text"
-                    required
-                    placeholder="Product Name"
-                    value={newSku.name}
-                    onChange={(e) => setNewSku({ ...newSku, name: e.target.value })}
-                    className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs sm:col-span-2"
+                    placeholder="Fabric weight, fit & search keywords (e.g. 460 GSM heavyweight fleece)..."
+                    value={newSku.description}
+                    onChange={(e) => setNewSku({ ...newSku, description: e.target.value })}
+                    className="mt-3 w-full border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
                   />
-                  <select
-                    value={newSku.category}
-                    onChange={(e) => setNewSku({ ...newSku, category: e.target.value })}
-                    className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
+                  <button
+                    type="submit"
+                    className="mt-4 inline-flex cursor-pointer items-center gap-1.5 bg-[#1C1917] px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
                   >
-                    <option>Hoodies</option>
-                    <option>Tees</option>
-                    <option>Bottoms</option>
-                    <option>Outerwear</option>
-                  </select>
-                  <input
-                    type="number"
-                    required
-                    step="0.01"
-                    placeholder="Retail ($)"
-                    value={newSku.price}
-                    onChange={(e) => setNewSku({ ...newSku, price: e.target.value })}
-                    className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
-                  />
-                  <input
-                    type="number"
-                    required
-                    step="0.01"
-                    placeholder="Unit COGS ($)"
-                    value={newSku.unitCost}
-                    onChange={(e) => setNewSku({ ...newSku, unitCost: e.target.value })}
-                    className="border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
-                  />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Fabric weight, fit & search keywords (e.g. 460 GSM heavyweight fleece)..."
-                  value={newSku.description}
-                  onChange={(e) => setNewSku({ ...newSku, description: e.target.value })}
-                  className="mt-3 w-full border border-stone-300 bg-[#F6F4EF] px-3 py-2 text-xs"
-                />
-                <button
-                  type="submit"
-                  className="mt-4 inline-flex cursor-pointer items-center gap-1.5 bg-[#1C1917] px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add Product to Storefront
-                </button>
-              </form>
+                    <Plus className="h-3.5 w-3.5" />
+                    Add Product to Storefront
+                  </button>
+                </form>
+              )}
             </div>
           )}
 
           {/* TAB 5: EXPENSES & OVERHEAD LEDGER */}
-          {cfoTab === 'expenses' && (
+          {!isStaffView && effectiveCfoTab === 'expenses' && (
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="border border-stone-300 bg-white/90 p-6 lg:col-span-8">
                 <h2 className="font-serif text-xl font-normal text-[#1C1917]">
@@ -3755,7 +4378,7 @@ export default function App() {
           )}
 
           {/* TAB 6: PROMO CODES & DISCOUNTS */}
-          {cfoTab === 'promos' && (
+          {!isStaffView && effectiveCfoTab === 'promos' && (
             <div className="max-w-2xl space-y-6">
               <form
                 onSubmit={(e) => {
@@ -3853,6 +4476,548 @@ export default function App() {
             </div>
           )}
         </main>
+      )}
+
+      {/* CUSTOMER ACCOUNT PORTAL MODAL */}
+      {accountModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
+          onClick={() => setAccountModalOpen(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto border border-stone-300 bg-[#F6F4EF] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-stone-300 pb-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                  Susquehanna Goods &bull; Member Portal
+                </span>
+                <h3 className="font-serif text-2xl text-[#1C1917]">
+                  {activeCustomer ? `Welcome, ${activeCustomer.name}` : 'Customer Account'}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {activeCustomer && (
+                  <button
+                    type="button"
+                    onClick={handleCustomerSignOut}
+                    className="inline-flex cursor-pointer items-center gap-1 border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:border-[#1C1917] hover:text-[#1C1917]"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span>Sign Out</span>
+                  </button>
+                )}
+                <button type="button" onClick={() => setAccountModalOpen(false)}>
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {!activeCustomer ? (
+              <div className="mt-5">
+                <div className="mb-4 flex flex-wrap gap-2 border-b border-stone-300 pb-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('login');
+                      setAuthFieldError({ field: '', message: '' });
+                      setAuthNotice('');
+                    }}
+                    className={`cursor-pointer px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider ${
+                      authMode === 'login'
+                        ? 'bg-[#1C1917] text-[#F6F4EF]'
+                        : 'border border-stone-300 bg-white text-stone-700'
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('register');
+                      setAuthFieldError({ field: '', message: '' });
+                      setAuthNotice('');
+                    }}
+                    className={`cursor-pointer px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider ${
+                      authMode === 'register'
+                        ? 'bg-[#1C1917] text-[#F6F4EF]'
+                        : 'border border-stone-300 bg-white text-stone-700'
+                    }`}
+                  >
+                    Create Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('reset');
+                      setAuthFieldError({ field: '', message: '' });
+                      setAuthNotice('');
+                    }}
+                    className={`cursor-pointer px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider ${
+                      authMode === 'reset'
+                        ? 'bg-[#1C1917] text-[#F6F4EF]'
+                        : 'border border-stone-300 bg-white text-stone-700'
+                    }`}
+                  >
+                    Reset Password
+                  </button>
+                </div>
+
+                {authNotice && (
+                  <div className="mb-4 border border-amber-700/40 bg-amber-50 p-3 text-xs font-semibold text-amber-950">
+                    {authNotice}
+                  </div>
+                )}
+
+                <form onSubmit={handleCustomerAuthSubmit} className="space-y-3 text-xs">
+                  {authMode === 'register' && (
+                    <div>
+                      <label className="block font-bold uppercase text-stone-500">Full Name</label>
+                      <input
+                        ref={authNameRef}
+                        type="text"
+                        placeholder="Jordan Taylor"
+                        value={authForm.name}
+                        onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })}
+                        className={`mt-1 w-full border bg-white px-3 py-2.5 ${
+                          authFieldError.field === 'name'
+                            ? 'border-rose-600 ring-2 ring-rose-200'
+                            : 'border-stone-300'
+                        }`}
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block font-bold uppercase text-stone-500">Email Address</label>
+                    <input
+                      ref={authEmailRef}
+                      type="email"
+                      placeholder="jtaylor@example.com"
+                      value={authForm.email}
+                      onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                      className={`mt-1 w-full border bg-white px-3 py-2.5 ${
+                        authFieldError.field === 'email'
+                          ? 'border-rose-600 ring-2 ring-rose-200'
+                          : 'border-stone-300'
+                      }`}
+                    />
+                  </div>
+
+                  {authMode !== 'reset' && (
+                    <div>
+                      <label className="block font-bold uppercase text-stone-500">Password</label>
+                      <input
+                        ref={authPasswordRef}
+                        type="password"
+                        placeholder={
+                          authMode === 'register'
+                            ? 'Create a password (6+ chars)'
+                            : 'Enter password (demo: demo-user-123)'
+                        }
+                        value={authForm.password}
+                        onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                        className={`mt-1 w-full border bg-white px-3 py-2.5 ${
+                          authFieldError.field === 'password'
+                            ? 'border-rose-600 ring-2 ring-rose-200'
+                            : 'border-stone-300'
+                        }`}
+                      />
+                    </div>
+                  )}
+
+                  {authMode === 'register' && (
+                    <div>
+                      <label className="block font-bold uppercase text-stone-500">
+                        Confirm Password
+                      </label>
+                      <input
+                        ref={authConfirmPasswordRef}
+                        type="password"
+                        placeholder="Re-enter password"
+                        value={authForm.confirmPassword}
+                        onChange={(e) =>
+                          setAuthForm({ ...authForm, confirmPassword: e.target.value })
+                        }
+                        className={`mt-1 w-full border bg-white px-3 py-2.5 ${
+                          authFieldError.field === 'confirmPassword'
+                            ? 'border-rose-600 ring-2 ring-rose-200'
+                            : 'border-stone-300'
+                        }`}
+                      />
+                    </div>
+                  )}
+
+                  {authFieldError.message && (
+                    <p className="font-semibold text-rose-700">{authFieldError.message}</p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="inline-flex w-full cursor-pointer items-center justify-center gap-1.5 bg-[#1C1917] py-3 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] hover:bg-amber-800"
+                  >
+                    <Lock className="h-3.5 w-3.5" />
+                    <span>
+                      {authMode === 'login'
+                        ? 'Sign In to My Account'
+                        : authMode === 'register'
+                        ? 'Create Account & Link Orders'
+                        : 'Send Password Reset'}
+                    </span>
+                  </button>
+                </form>
+
+                {authMode === 'login' && (
+                  <p className="mt-3 text-[11px] text-stone-600">
+                    Demo member: <strong>jtaylor@example.com</strong> /{' '}
+                    <strong>demo-user-123</strong>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4">
+                <div className="mb-4 flex flex-wrap gap-2 border-b border-stone-300 pb-3">
+                  {[
+                    { id: 'orders', label: `Orders (${activeCustomerOrders.length})` },
+                    { id: 'saved', label: `Saved (${savedProducts.length})` },
+                    {
+                      id: 'addresses',
+                      label: `Addresses & Fit (${(activeCustomer.addresses || []).length})`,
+                    },
+                    { id: 'profile', label: 'Perks & Profile' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setAccountSubTab(tab.id)}
+                      className={`cursor-pointer px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider ${
+                        accountSubTab === tab.id
+                          ? 'bg-[#1C1917] text-[#F6F4EF]'
+                          : 'border border-stone-300 bg-white text-stone-700'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* ACCOUNT TAB 1: ORDER HISTORY, SELF-SERVICE ADDRESS EDIT, CANCEL & REORDER */}
+                {accountSubTab === 'orders' && (
+                  <div className="space-y-3 text-xs">
+                    {activeCustomerOrders.length === 0 ? (
+                      <div className="border border-stone-300 bg-white p-6 text-center text-stone-600">
+                        No orders placed under <strong>{activeCustomer.email}</strong> yet.
+                      </div>
+                    ) : (
+                      activeCustomerOrders.map((ord) => {
+                        const status = ord.fulfillmentStatus || 'Unfulfilled';
+                        const canModify = status === 'Unfulfilled';
+                        return (
+                          <div key={ord.id} className="border border-stone-300 bg-white p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-2">
+                              <div>
+                                <strong className="text-sm">{ord.id}</strong> &bull; {ord.date}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="border border-amber-700/30 bg-amber-50 px-2 py-0.5 font-bold uppercase text-amber-900">
+                                  {status}
+                                </span>
+                                <strong className="text-sm">
+                                  ${Number(ord.total).toFixed(2)}
+                                </strong>
+                              </div>
+                            </div>
+
+                            <p className="mt-2 text-stone-600">
+                              <strong>Shipping Address:</strong> {ord.address}
+                            </p>
+                            {ord.tracking && (
+                              <p className="mt-1 font-semibold text-[#1C1917]">
+                                {ord.carrier || 'Carrier'} Tracking: {ord.tracking}
+                              </p>
+                            )}
+
+                            <ul className="mt-2 list-disc pl-4 text-stone-700">
+                              {(ord.items || []).map((it, idx) => (
+                                <li key={idx}>
+                                  {it.qty}x {it.name} (Size {it.size}) &mdash; $
+                                  {(it.price * it.qty).toFixed(2)}
+                                </li>
+                              ))}
+                            </ul>
+
+                            {editingOrderId === ord.id ? (
+                              <div className="mt-3 flex flex-wrap gap-2 border-t border-stone-200 pt-3">
+                                <input
+                                  type="text"
+                                  value={editingOrderAddress}
+                                  onChange={(e) => setEditingOrderAddress(e.target.value)}
+                                  className="min-w-[220px] flex-1 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCustomerOrderAddress(ord.id)}
+                                  className="cursor-pointer bg-[#1C1917] px-3 py-1.5 font-semibold text-[#F6F4EF]"
+                                >
+                                  Save Address
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingOrderId('')}
+                                  className="cursor-pointer border border-stone-300 bg-white px-2.5 py-1.5"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-stone-200 pt-3">
+                                {canModify && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingOrderId(ord.id);
+                                        setEditingOrderAddress(ord.address);
+                                      }}
+                                      className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 font-semibold text-[#1C1917] hover:border-[#1C1917]"
+                                    >
+                                      Edit Shipping Address
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCancelUnfulfilledOrder(ord.id)}
+                                      className="cursor-pointer border border-rose-300 bg-rose-50 px-2.5 py-1 font-semibold text-rose-800 hover:bg-rose-100"
+                                    >
+                                      Cancel Order &amp; Restock
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    (ord.items || []).forEach((it) => {
+                                      const prod = state.products.find((p) => p.id === it.id);
+                                      if (prod && Number(prod.sizeStock?.[it.size] || 0) > 0) {
+                                        addItemToCart(prod, it.size);
+                                      }
+                                    });
+                                    setAccountModalOpen(false);
+                                  }}
+                                  className="inline-flex cursor-pointer items-center gap-1 border border-[#1C1917] bg-white px-2.5 py-1 font-semibold text-[#1C1917] hover:bg-stone-100"
+                                >
+                                  <RefreshCw className="h-3 w-3" />
+                                  <span>Reorder</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {/* ACCOUNT TAB 2: SAVED ITEMS WISHLIST */}
+                {accountSubTab === 'saved' && (
+                  <div className="space-y-3 text-xs">
+                    {savedProducts.length === 0 ? (
+                      <div className="border border-stone-300 bg-white p-6 text-center text-stone-600">
+                        No saved items yet. Click the heart icon on any storefront item to save it here.
+                      </div>
+                    ) : (
+                      savedProducts.map((prod) => {
+                        const units = totalUnitsForProduct(prod);
+                        return (
+                          <div
+                            key={prod.id}
+                            className="flex flex-wrap items-center justify-between gap-3 border border-stone-300 bg-white p-4"
+                          >
+                            <div>
+                              <strong className="text-sm">{prod.name}</strong> &bull; $
+                              {Number(prod.price).toFixed(2)} ({units} in stock)
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAccountModalOpen(false);
+                                  openQuickView(prod);
+                                }}
+                                className="cursor-pointer bg-[#1C1917] px-3 py-1.5 font-semibold text-[#F6F4EF] hover:bg-amber-800"
+                              >
+                                Select Size
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleSavedProduct(prod.id)}
+                                className="cursor-pointer text-rose-700 hover:underline"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {/* ACCOUNT TAB 3: ADDRESS BOOK & PREFERRED SIZE */}
+                {accountSubTab === 'addresses' && (
+                  <div className="space-y-4 text-xs">
+                    <div className="border border-stone-300 bg-white p-4">
+                      <label className="block font-bold uppercase text-stone-500">
+                        Preferred Fit Size (Auto-Preselected in Quick View)
+                      </label>
+                      <div className="mt-2 flex gap-2">
+                        {['S', 'M', 'L', 'XL', '2XL'].map((sz) => (
+                          <button
+                            key={sz}
+                            type="button"
+                            onClick={() => updatePreferredSize(sz)}
+                            className={`cursor-pointer border px-3 py-1.5 font-bold ${
+                              activeCustomer.preferredSize === sz
+                                ? 'border-amber-800 bg-amber-800 text-white'
+                                : 'border-stone-300 bg-[#F6F4EF] text-[#1C1917]'
+                            }`}
+                          >
+                            {sz}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {(activeCustomer.addresses || []).map((addr) => (
+                        <div
+                          key={addr.id}
+                          className="flex flex-wrap items-center justify-between gap-2 border border-stone-300 bg-white p-3.5"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-3.5 w-3.5 text-amber-800" />
+                              <strong>{addr.label}</strong>
+                              {addr.isDefault && (
+                                <span className="border border-amber-700/30 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                                  Default
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-stone-700">
+                              {addr.recipient} &mdash; {addr.line1}
+                            </p>
+                          </div>
+                          {!addr.isDefault && (
+                            <button
+                              type="button"
+                              onClick={() => setDefaultCustomerAddress(addr.id)}
+                              className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 font-semibold hover:border-[#1C1917]"
+                            >
+                              Set Default
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <form
+                      onSubmit={handleAddCustomerAddress}
+                      className="space-y-2.5 border border-stone-300 bg-white p-4"
+                    >
+                      <strong className="block text-sm">Add New Shipping Address</strong>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Label (e.g. Home, Work)"
+                          value={newAddressForm.label}
+                          onChange={(e) =>
+                            setNewAddressForm({ ...newAddressForm, label: e.target.value })
+                          }
+                          className="border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Recipient Name"
+                          value={newAddressForm.recipient}
+                          onChange={(e) =>
+                            setNewAddressForm({ ...newAddressForm, recipient: e.target.value })
+                          }
+                          className="border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Street Address, City, State ZIP"
+                        value={newAddressForm.line1}
+                        onChange={(e) =>
+                          setNewAddressForm({ ...newAddressForm, line1: e.target.value })
+                        }
+                        className="w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                      />
+                      {addressError && <p className="font-semibold text-rose-700">{addressError}</p>}
+                      <button
+                        type="submit"
+                        className="cursor-pointer bg-[#1C1917] px-4 py-2 font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+                      >
+                        Save Address
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* ACCOUNT TAB 4: PROFILE & ACTIVE PROMO PERKS */}
+                {accountSubTab === 'profile' && (
+                  <div className="space-y-4 text-xs">
+                    <div className="border border-stone-300 bg-white p-4">
+                      <p>
+                        <strong>Name:</strong> {activeCustomer.name}
+                      </p>
+                      <p className="mt-1">
+                        <strong>Email:</strong> {activeCustomer.email}
+                      </p>
+                      <p className="mt-1">
+                        <strong>Preferred Size:</strong> {activeCustomer.preferredSize || 'L'}
+                      </p>
+                    </div>
+
+                    <div className="border border-stone-300 bg-white p-4">
+                      <strong className="block text-sm">Active Member Promo Codes</strong>
+                      <div className="mt-2.5 space-y-2">
+                        {promos
+                          .filter((p) => p.active)
+                          .map((pr) => (
+                            <div
+                              key={pr.id}
+                              className="flex items-center justify-between border border-stone-200 bg-[#F6F4EF] px-3 py-2"
+                            >
+                              <span>
+                                <strong>{pr.code}</strong> &mdash;{' '}
+                                {pr.type === 'percent' ? `${pr.value}% Off` : `$${pr.value} Off`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPromoInput(pr.code);
+                                  setPromoError('');
+                                  setAppliedPromo(pr);
+                                  setAccountModalOpen(false);
+                                  setCartOpen(true);
+                                }}
+                                className="cursor-pointer bg-[#1C1917] px-2.5 py-1 text-[11px] font-semibold text-[#F6F4EF] hover:bg-amber-800"
+                              >
+                                Apply to Bag
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* CUSTOMER TRACK ORDER MODAL */}
@@ -4196,6 +5361,20 @@ export default function App() {
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" />
                   <span>{orderBanner}</span>
                 </div>
+                {postOrderAccountPrompt && (
+                  <div className="mt-3 border-t border-amber-700/20 pt-2.5">
+                    <p className="text-[11px] text-stone-700">
+                      Save your details &amp; link this order to a member account?
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleQuickCreateAccountFromOrder}
+                      className="mt-1.5 cursor-pointer bg-[#1C1917] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+                    >
+                      Save Account &amp; View Orders
+                    </button>
+                  </div>
+                )}
                 {lastPlacedOrder && (
                   <button
                     type="button"
