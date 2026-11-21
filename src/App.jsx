@@ -623,21 +623,21 @@ export default function App() {
     <div className="min-h-screen bg-[#F6F4EF] text-[#1C1917]">
       {/* TOP DEMO CONTROL BAR */}
       <div className="sticky top-0 z-50 border-b border-stone-800 bg-[#1C1917] px-4 py-2.5 text-[#F6F4EF]">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
-            <span className="border border-amber-500/50 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-widest text-amber-300">
+            <span className="whitespace-nowrap border border-amber-500/50 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-widest text-amber-300">
               Tier 03 Flagship &amp; CFO
             </span>
-            <span className="hidden text-xs text-stone-300 sm:inline">
-              Storefront + Fulfillment + Team Payroll + Real-Time CFO Ledger
+            <span className="hidden text-xs text-stone-300 xl:inline">
+              Storefront, Payroll &amp; Live CFO Ledger
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setMode('store')}
-              className={`inline-flex cursor-pointer items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold tracking-wide transition ${
+              className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-xs font-semibold tracking-wide transition ${
                 mode === 'store'
                   ? 'bg-[#F6F4EF] text-[#1C1917]'
                   : 'border border-stone-700 text-stone-300 hover:border-stone-500 hover:text-white'
@@ -650,7 +650,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setMode('cfo')}
-              className={`inline-flex cursor-pointer items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold tracking-wide transition ${
+              className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-xs font-semibold tracking-wide transition ${
                 mode === 'cfo'
                   ? 'bg-amber-600 text-white'
                   : 'border border-stone-700 text-stone-300 hover:border-amber-500 hover:text-white'
@@ -663,15 +663,15 @@ export default function App() {
             <button
               type="button"
               onClick={resetDemo}
-              className="inline-flex cursor-pointer items-center gap-1 border border-stone-700 px-2.5 py-1.5 text-xs text-stone-300 hover:border-stone-500 hover:text-white"
+              className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap border border-stone-700 px-2.5 py-1.5 text-xs text-stone-300 hover:border-stone-500 hover:text-white"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Reset</span>
+              <span>Reset</span>
             </button>
 
             <a
               href="https://cloud.majorstylejunction.com/#contact"
-              className="hidden items-center gap-1 border border-amber-500/40 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-stone-800 lg:inline-flex"
+              className="hidden items-center gap-1 whitespace-nowrap border border-amber-500/40 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-stone-800 md:inline-flex"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to MSJ Cloud
