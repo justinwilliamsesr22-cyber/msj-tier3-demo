@@ -29,6 +29,8 @@ import {
   AlertTriangle,
   Bell,
   Edit3,
+  Truck,
+  Ruler,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'msj_tier3_demo_v1';
@@ -449,7 +451,7 @@ export default function App() {
     };
   }, []);
 
-  // Refs for Ctrl+K / Quick Search Focus & Field Validation
+  // Refs for Ctrl+K & Field Validation
   const adminSearchRef = useRef(null);
   const storeSearchRef = useRef(null);
   const empNameInputRef = useRef(null);
@@ -484,9 +486,14 @@ export default function App() {
   const [storeSort, setStoreSort] = useState('featured');
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Storefront Quick-View & Cart State
+  // Storefront Quick-View, Size Guide, Order Tracker & Cart State
   const [selectedProd, setSelectedProd] = useState(null);
   const [selectedSize, setSelectedSize] = useState('L');
+  const [quickViewNotice, setQuickViewNotice] = useState('');
+  const [showSizeGuide, setShowSizeGuide] = useState(false);
+  const [trackModalOpen, setTrackModalOpen] = useState(false);
+  const [trackQuery, setTrackQuery] = useState({ orderId: '', email: '' });
+  const [trackResult, setTrackResult] = useState(null);
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [promoInput, setPromoInput] = useState('');
@@ -494,6 +501,7 @@ export default function App() {
   const [promoError, setPromoError] = useState('');
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
   const [orderBanner, setOrderBanner] = useState('');
+  const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
 
   // Admin & CFO Universal Search + Tab Filters + Shift Correction Modal
   const [adminGlobalSearch, setAdminGlobalSearch] = useState('');
@@ -505,7 +513,7 @@ export default function App() {
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCatFilter, setInventoryCatFilter] = useState('All');
   const [slipOrder, setSlipOrder] = useState(null);
-  const [payStubEmp, setPayStubEmp] = useState(null);
+  const [payStubEmpId, setPayStubEmpId] = useState('');
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [shiftForm, setShiftForm] = useState({
     id: '',
@@ -564,6 +572,7 @@ export default function App() {
     setCart([]);
     setAppliedPromo(null);
     setOrderBanner('');
+    setLastPlacedOrder(null);
     setStorageWarning('');
     setEmpFieldError({ field: '', message: '' });
     setCheckoutFieldError({ field: '', message: '' });
@@ -621,7 +630,7 @@ export default function App() {
   const promos = state.promos || [];
 
   const getEmployeeBreakdown = (emp) => {
-    if (!emp.active) {
+    if (!emp || !emp.active) {
       return { regHours: 0, otHours: 0, regPay: 0, otPay: 0, totalPay: 0 };
     }
     const rate = Number(emp.rate || 0);
@@ -717,6 +726,9 @@ export default function App() {
     const prevHours = existingLog ? Number(existingLog.hours || 0) : 0;
     const deltaHours = Number((nextHours - prevHours).toFixed(2));
 
+    const prevTargetEmp = employees.find((emp) => emp.name === shiftForm.empName);
+    const prevBreakdown = prevTargetEmp ? getEmployeeBreakdown(prevTargetEmp) : { totalPay: 0 };
+
     const updatedEmployees = employees.map((emp) => {
       if (emp.name !== shiftForm.empName || emp.payType !== 'hourly') return emp;
       return {
@@ -726,10 +738,20 @@ export default function App() {
     });
 
     const targetEmp = updatedEmployees.find((emp) => emp.name === shiftForm.empName);
-    const breakdown = targetEmp ? getEmployeeBreakdown(targetEmp) : { otHours: 0 };
-    const earned =
+    const nextBreakdown = targetEmp
+      ? getEmployeeBreakdown(targetEmp)
+      : { otHours: 0, totalPay: 0 };
+    const shiftDeltaPay =
       targetEmp && targetEmp.payType === 'hourly'
-        ? Number((nextHours * Number(targetEmp.rate || 0)).toFixed(2))
+        ? Math.max(
+            0,
+            Number(
+              (
+                Number(existingLog?.earned || 0) +
+                (nextBreakdown.totalPay - prevBreakdown.totalPay)
+              ).toFixed(2)
+            )
+          )
         : Number(existingLog?.earned || 0);
 
     const nextEntry = {
@@ -739,8 +761,8 @@ export default function App() {
       clockIn: shiftForm.clockIn.trim() || '09:00 AM',
       clockOut: shiftForm.clockOut.trim() || '05:00 PM',
       hours: nextHours,
-      otHours: breakdown.otHours,
-      earned,
+      otHours: nextBreakdown.otHours,
+      earned: shiftDeltaPay,
       note: shiftForm.note.trim() || 'Shift corrected by admin',
     };
 
@@ -853,11 +875,85 @@ export default function App() {
         targetSize = sizes.find((sz) => Number(prod.sizeStock?.[sz] || 0) > 0) || 'L';
       }
     }
+    setQuickViewNotice('');
+    setShowSizeGuide(false);
     setSelectedSize(targetSize);
     setSelectedProd(prod);
   };
 
-  // Universal Admin Omnisearch (Searches Storefront Products, Orders, Team, Expenses, Promos, P&L)
+  // Cart & Stock-Aware Quantity Handlers
+  const addItemToCart = (prod, size) => {
+    const available = Number(prod.sizeStock?.[size] || 0);
+    if (available <= 0) {
+      setQuickViewNotice(`Size ${size} is currently sold out.`);
+      return;
+    }
+
+    const existingIdx = cart.findIndex((c) => c.id === prod.id && c.size === size);
+    if (existingIdx > -1) {
+      if (cart[existingIdx].qty >= available) {
+        setQuickViewNotice(`You already have all ${available} available units of Size ${size} in your bag.`);
+        return;
+      }
+      const nextCart = [...cart];
+      nextCart[existingIdx] = {
+        ...nextCart[existingIdx],
+        qty: nextCart[existingIdx].qty + 1,
+      };
+      setCart(nextCart);
+    } else {
+      setCart([
+        ...cart,
+        {
+          id: prod.id,
+          name: prod.name,
+          price: prod.price,
+          unitCost: prod.unitCost,
+          image: prod.image || '',
+          size,
+          qty: 1,
+        },
+      ]);
+    }
+    setQuickViewNotice('');
+    setSelectedProd(null);
+    setCartOpen(true);
+  };
+
+  const updateCartItemQty = (index, delta) => {
+    const entry = cart[index];
+    if (!entry) return;
+    if (delta > 0) {
+      const liveProd = state.products.find((p) => p.id === entry.id);
+      const maxStock = liveProd ? Number(liveProd.sizeStock?.[entry.size] || 99) : 99;
+      if (entry.qty + delta > maxStock) return;
+    }
+    const nextQty = entry.qty + delta;
+    if (nextQty <= 0) {
+      setCart(cart.filter((_, idx) => idx !== index));
+    } else {
+      setCart(cart.map((item, idx) => (idx === index ? { ...item, qty: nextQty } : item)));
+    }
+  };
+
+  const removeCartItem = (index) => {
+    setCart(cart.filter((_, idx) => idx !== index));
+  };
+
+  // Customer Order Lookup Handler
+  const handleCustomerTrackLookup = (e) => {
+    e.preventDefault();
+    const idQuery = trackQuery.orderId.trim().replace(/^#/, '').toUpperCase();
+    const emailQuery = trackQuery.email.trim().toLowerCase();
+    const match = state.orders.find(
+      (o) =>
+        o.id.toUpperCase() === idQuery &&
+        o.customerEmail.trim().toLowerCase() === emailQuery
+    );
+    setTrackResult(match || 'NOT_FOUND');
+  };
+
+  // Universal Admin Omnisearch
   const adminOmnisearchResults = useMemo(() => {
     const q = adminGlobalSearch.trim().toLowerCase();
     if (!q) {
@@ -1156,8 +1252,9 @@ export default function App() {
     setAppliedPromo(null);
     setPromoInput('');
     setCheckoutForm({ name: '', email: '', address: '' });
+    setLastPlacedOrder({ id, email: newOrder.customerEmail });
     setOrderBanner(
-      `Order ${id} ($${cartTotal.toFixed(2)}) created! Switch to Behind the Scenes (CFO Suite) to fulfill it, print a packing slip, and view updated P&L.`
+      `Order ${id} ($${cartTotal.toFixed(2)}) confirmed! Track it anytime with Track Order or open Behind the Scenes (CFO Suite) to fulfill it.`
     );
   };
 
@@ -1222,6 +1319,11 @@ export default function App() {
     acc[exp.category] = (acc[exp.category] || 0) + Number(exp.amount || 0);
     return acc;
   }, {});
+
+  const livePayStubEmp = useMemo(
+    () => (payStubEmpId ? employees.find((e) => e.id === payStubEmpId) : null),
+    [employees, payStubEmpId]
+  );
 
   return (
     <div className="min-h-screen bg-[#F6F4EF] text-[#1C1917]">
@@ -1300,8 +1402,8 @@ export default function App() {
                 </span>
               </div>
 
-              <div className="flex flex-1 items-center justify-end gap-3 sm:max-w-md">
-                <div className="relative flex-1">
+              <div className="flex flex-1 flex-wrap items-center justify-end gap-2.5 sm:max-w-xl">
+                <div className="relative min-w-[200px] flex-1">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
                   <input
                     ref={storeSearchRef}
@@ -1328,6 +1430,18 @@ export default function App() {
                     </button>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTrackResult(null);
+                    setTrackModalOpen(true);
+                  }}
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 border border-stone-400 bg-white px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#1C1917] transition hover:border-[#1C1917]"
+                >
+                  <Truck className="h-3.5 w-3.5" />
+                  <span>Track Order</span>
+                </button>
 
                 <button
                   type="button"
@@ -1838,7 +1952,6 @@ export default function App() {
             </div>
           )}
 
-          {/* LIVE OVERTIME UPDATE BANNER */}
           {overtimeAlerts.length > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-2 border-amber-600 bg-amber-50 px-4 py-3 text-xs text-amber-950">
               <div className="flex items-center gap-2">
@@ -1864,7 +1977,6 @@ export default function App() {
             </div>
           )}
 
-          {/* UNIVERSAL ADMIN OMNISEARCH BAR */}
           <div className="relative mb-7 border-2 border-[#1C1917] bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">
@@ -2528,7 +2640,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Overtime Policy Configurator */}
               <div className="border border-stone-300 bg-white/90 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -2634,7 +2745,10 @@ export default function App() {
                       return;
                     }
                     if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
-                      setEmpFieldError({ field: 'rate', message: 'Enter a valid pay rate ($0 or higher).' });
+                      setEmpFieldError({
+                        field: 'rate',
+                        message: 'Enter a valid pay rate ($0 or higher).',
+                      });
                       empRateInputRef.current?.focus();
                       return;
                     }
@@ -2883,7 +2997,7 @@ export default function App() {
 
                           <button
                             type="button"
-                            onClick={() => setPayStubEmp(emp)}
+                            onClick={() => setPayStubEmpId(emp.id)}
                             className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
                           >
                             Stub
@@ -2908,7 +3022,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Completed Shift Logs & Missed Clock-Out Correction */}
               <div className="border border-stone-300 bg-white/90 p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -3742,6 +3855,92 @@ export default function App() {
         </main>
       )}
 
+      {/* CUSTOMER TRACK ORDER MODAL */}
+      {trackModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
+          onClick={() => setTrackModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md border border-stone-300 bg-[#F6F4EF] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-stone-300 pb-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                  Live Fulfillment Lookup
+                </span>
+                <h3 className="font-serif text-xl text-[#1C1917]">Track Your Order</h3>
+              </div>
+              <button type="button" onClick={() => setTrackModalOpen(false)}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCustomerTrackLookup} className="mt-4 space-y-3 text-xs">
+              <input
+                type="text"
+                required
+                placeholder="Order Number (e.g. SG-2041)"
+                value={trackQuery.orderId}
+                onChange={(e) => setTrackQuery({ ...trackQuery, orderId: e.target.value })}
+                className="w-full border border-stone-300 bg-white px-3 py-2.5 uppercase"
+              />
+              <input
+                type="email"
+                required
+                placeholder="Checkout Email (e.g. jtaylor@example.com)"
+                value={trackQuery.email}
+                onChange={(e) => setTrackQuery({ ...trackQuery, email: e.target.value })}
+                className="w-full border border-stone-300 bg-white px-3 py-2.5"
+              />
+              <button
+                type="submit"
+                className="w-full cursor-pointer bg-[#1C1917] py-2.5 text-xs font-semibold uppercase tracking-widest text-[#F6F4EF] hover:bg-amber-800"
+              >
+                Check Status
+              </button>
+            </form>
+
+            {trackResult === 'NOT_FOUND' && (
+              <p className="mt-4 border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800">
+                No matching order found. Check your Order Number (e.g. SG-2041) and email address.
+              </p>
+            )}
+
+            {trackResult && trackResult !== 'NOT_FOUND' && (
+              <div className="mt-4 border border-stone-300 bg-white p-4 text-xs">
+                <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                  <strong className="text-sm">{trackResult.id}</strong>
+                  <span className="border border-amber-700/30 bg-amber-50 px-2 py-0.5 font-bold uppercase text-amber-900">
+                    {trackResult.fulfillmentStatus || 'Unfulfilled'}
+                  </span>
+                </div>
+                <p className="mt-2 text-stone-600">
+                  <strong>Ship To:</strong> {trackResult.address}
+                </p>
+                {trackResult.tracking ? (
+                  <p className="mt-2 border border-stone-200 bg-[#F6F4EF] p-2 font-semibold text-[#1C1917]">
+                    {trackResult.carrier || 'Carrier'} Tracking: {trackResult.tracking}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-stone-500">
+                    Tracking number will appear here as soon as your package is scanned.
+                  </p>
+                )}
+                <ul className="mt-2 list-disc pl-4 text-stone-700">
+                  {trackResult.items.map((it, idx) => (
+                    <li key={idx}>
+                      {it.qty}x {it.name} (Size {it.size})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* FIX MISSED CLOCK-OUT / SHIFT LOG MODAL */}
       {shiftModalOpen && (
         <div
@@ -3846,14 +4045,14 @@ export default function App() {
         </div>
       )}
 
-      {/* QUICK-VIEW SIZE MODAL */}
+      {/* QUICK-VIEW SIZE & FIT MODAL */}
       {selectedProd && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
           onClick={() => setSelectedProd(null)}
         >
           <div
-            className="w-full max-w-md border border-stone-300 bg-[#F6F4EF] p-6 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto border border-stone-300 bg-[#F6F4EF] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -3871,10 +4070,65 @@ export default function App() {
                 />
               </div>
             )}
-            <p className="mt-2 font-semibold text-amber-800">${selectedProd.price.toFixed(2)}</p>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="font-semibold text-amber-800">${selectedProd.price.toFixed(2)}</p>
+              <button
+                type="button"
+                onClick={() => setShowSizeGuide((prev) => !prev)}
+                className="inline-flex cursor-pointer items-center gap-1 text-xs font-semibold text-[#1C1917] underline hover:text-amber-800"
+              >
+                <Ruler className="h-3.5 w-3.5" />
+                <span>{showSizeGuide ? 'Hide Size Chart' : 'Size & Fit Guide'}</span>
+              </button>
+            </div>
             {selectedProd.description && (
               <p className="mt-1 text-xs text-stone-600">{selectedProd.description}</p>
             )}
+
+            {showSizeGuide && (
+              <div className="mt-3 border border-stone-300 bg-white p-3 text-[11px]">
+                <p className="mb-1.5 font-bold uppercase tracking-wider text-stone-600">
+                  Garment Measurements (Inches)
+                </p>
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-stone-200 text-stone-500">
+                      <th className="py-1">Size</th>
+                      <th className="py-1">Chest</th>
+                      <th className="py-1">Length</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    <tr>
+                      <td className="py-1 font-bold">S</td>
+                      <td>20.5&quot;</td>
+                      <td>27.5&quot;</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 font-bold">M</td>
+                      <td>22.0&quot;</td>
+                      <td>28.5&quot;</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 font-bold">L</td>
+                      <td>23.5&quot;</td>
+                      <td>29.5&quot;</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 font-bold">XL</td>
+                      <td>25.0&quot;</td>
+                      <td>30.5&quot;</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 font-bold">2XL</td>
+                      <td>26.5&quot;</td>
+                      <td>31.5&quot;</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             <div className="mt-4 grid grid-cols-5 gap-2">
               {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
                 const count = Number(selectedProd.sizeStock?.[sz] || 0);
@@ -3883,7 +4137,10 @@ export default function App() {
                     key={sz}
                     type="button"
                     disabled={count === 0}
-                    onClick={() => setSelectedSize(sz)}
+                    onClick={() => {
+                      setQuickViewNotice('');
+                      setSelectedSize(sz);
+                    }}
                     className={`cursor-pointer border py-2 text-center text-xs font-bold ${
                       count === 0
                         ? 'border-stone-200 bg-stone-100 text-stone-400 line-through'
@@ -3898,25 +4155,15 @@ export default function App() {
                 );
               })}
             </div>
+
+            {quickViewNotice && (
+              <p className="mt-2.5 text-xs font-semibold text-rose-700">{quickViewNotice}</p>
+            )}
+
             <button
               type="button"
-              onClick={() => {
-                setCart([
-                  ...cart,
-                  {
-                    id: selectedProd.id,
-                    name: selectedProd.name,
-                    price: selectedProd.price,
-                    unitCost: selectedProd.unitCost,
-                    image: selectedProd.image || '',
-                    size: selectedSize,
-                    qty: 1,
-                  },
-                ]);
-                setSelectedProd(null);
-                setCartOpen(true);
-              }}
-              className="mt-5 w-full cursor-pointer bg-amber-800 py-3 text-xs font-semibold uppercase tracking-widest text-white"
+              onClick={() => addItemToCart(selectedProd, selectedSize)}
+              className="mt-5 w-full cursor-pointer bg-amber-800 py-3 text-xs font-semibold uppercase tracking-widest text-white hover:bg-amber-900"
             >
               Add Size {selectedSize} to Bag
             </button>
@@ -3935,16 +4182,39 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-stone-300 pb-4">
-              <h3 className="font-serif text-xl text-[#1C1917]">Flagship Checkout</h3>
+              <h3 className="font-serif text-xl text-[#1C1917]">
+                Flagship Checkout ({cart.reduce((s, i) => s + i.qty, 0)})
+              </h3>
               <button type="button" onClick={() => setCartOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             {orderBanner && (
-              <div className="mt-4 flex items-start gap-2 border border-amber-700/30 bg-amber-50 p-4 text-xs text-stone-900">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" />
-                <span>{orderBanner}</span>
+              <div className="mt-4 border border-amber-700/30 bg-amber-50 p-4 text-xs text-stone-900">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" />
+                  <span>{orderBanner}</span>
+                </div>
+                {lastPlacedOrder && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCartOpen(false);
+                      setTrackQuery({
+                        orderId: lastPlacedOrder.id,
+                        email: lastPlacedOrder.email,
+                      });
+                      const found = state.orders.find((o) => o.id === lastPlacedOrder.id);
+                      setTrackResult(found || null);
+                      setTrackModalOpen(true);
+                    }}
+                    className="mt-2.5 inline-flex cursor-pointer items-center gap-1 font-bold uppercase tracking-wider text-amber-900 underline"
+                  >
+                    <Truck className="h-3.5 w-3.5" />
+                    <span>View Order Status ({lastPlacedOrder.id})</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -3954,22 +4224,55 @@ export default function App() {
               <form onSubmit={handleDemoPurchase} className="mt-4 space-y-4">
                 {cart.map((c, idx) => (
                   <div
-                    key={idx}
+                    key={`${c.id}-${c.size}`}
                     className="flex items-center justify-between gap-3 border border-stone-200 bg-white p-3 text-sm"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       {c.image && (
                         <img
                           src={c.image}
                           alt={c.name}
-                          className="h-11 w-11 shrink-0 border border-stone-200 object-cover"
+                          className="h-12 w-12 shrink-0 border border-stone-200 object-cover"
                         />
                       )}
-                      <span>
-                        {c.name} (Size {c.size})
-                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-[#1C1917]">{c.name}</p>
+                        <p className="text-xs text-stone-500">
+                          Size {c.size} &bull; ${Number(c.price).toFixed(2)} ea
+                        </p>
+                        <div className="mt-1.5 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
+                          <button
+                            type="button"
+                            onClick={() => updateCartItemQty(idx, -1)}
+                            aria-label="Decrease quantity"
+                            className="cursor-pointer px-2 py-0.5 text-stone-700 hover:bg-stone-200"
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="min-w-7 text-center text-xs font-bold">{c.qty}</span>
+                          <button
+                            type="button"
+                            onClick={() => updateCartItemQty(idx, 1)}
+                            aria-label="Increase quantity"
+                            className="cursor-pointer px-2 py-0.5 text-stone-700 hover:bg-stone-200"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <strong>${c.price.toFixed(2)}</strong>
+
+                    <div className="flex flex-col items-end gap-2">
+                      <strong>${(c.price * c.qty).toFixed(2)}</strong>
+                      <button
+                        type="button"
+                        onClick={() => removeCartItem(idx)}
+                        aria-label="Remove item"
+                        className="cursor-pointer text-stone-400 hover:text-rose-700"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
 
@@ -4003,6 +4306,12 @@ export default function App() {
                     <span>Subtotal</span>
                     <span>${cartSubtotal.toFixed(2)}</span>
                   </div>
+                  {cartDiscount > 0 && (
+                    <div className="flex justify-between font-semibold text-amber-800">
+                      <span>Discount ({appliedPromo?.code})</span>
+                      <span>-${cartDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-stone-600">
                     <span>Shipping ($100+ Free)</span>
                     <span>{cartShipping === 0 ? 'FREE' : `$${cartShipping.toFixed(2)}`}</span>
@@ -4105,57 +4414,73 @@ export default function App() {
       )}
 
       {/* EMPLOYEE PAY STUB PREVIEW MODAL */}
-      {payStubEmp && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
-          onClick={() => setPayStubEmp(null)}
-        >
+      {livePayStubEmp && (() => {
+        const stubBreakdown = getEmployeeBreakdown(livePayStubEmp);
+        return (
           <div
-            className="w-full max-w-md border border-stone-300 bg-white p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
+            onClick={() => setPayStubEmpId('')}
           >
-            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
-                  Susquehanna Goods &bull; Payroll Statement
-                </span>
-                <h3 className="font-serif text-xl text-[#1C1917]">{payStubEmp.name}</h3>
+            <div
+              className="w-full max-w-md border border-stone-300 bg-white p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                    Susquehanna Goods &bull; Payroll Statement
+                  </span>
+                  <h3 className="font-serif text-xl text-[#1C1917]">{livePayStubEmp.name}</h3>
+                </div>
+                <button type="button" onClick={() => setPayStubEmpId('')}>
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <button type="button" onClick={() => setPayStubEmp(null)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="mt-4 space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-stone-600">Role / Department</span>
-                <strong>
-                  {payStubEmp.role} ({payStubEmp.department})
-                </strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-stone-600">Pay Basis</span>
-                <strong>
-                  {payStubEmp.payType === 'hourly'
-                    ? `$${Number(payStubEmp.rate).toFixed(2)}/hr × ${payStubEmp.hours} hrs`
-                    : `Flat Stipend ($${Number(payStubEmp.rate).toFixed(2)})`}
-                </strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-stone-600">Roster Status</span>
-                <strong>
-                  {payStubEmp.active ? 'Active (Included in P&L)' : 'Off-Cycle ($0.00)'}
-                </strong>
-              </div>
-              <div className="flex justify-between border-t border-stone-300 pt-3 text-base font-bold">
-                <span>Period Gross Payout</span>
-                <span className="text-amber-800">
-                  ${getEmployeePayout(payStubEmp).toFixed(2)}
-                </span>
+              <div className="mt-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-stone-600">Role / Department</span>
+                  <strong>
+                    {livePayStubEmp.role} ({livePayStubEmp.department})
+                  </strong>
+                </div>
+                {livePayStubEmp.payType === 'hourly' ? (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-stone-600">
+                        Regular Pay (${Number(livePayStubEmp.rate).toFixed(2)}/hr &times;{' '}
+                        {stubBreakdown.regHours}h)
+                      </span>
+                      <strong>${stubBreakdown.regPay.toFixed(2)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-600">
+                        Overtime Pay ({overtimeRule.multiplier}&times; &times;{' '}
+                        {stubBreakdown.otHours}h)
+                      </span>
+                      <strong>${stubBreakdown.otPay.toFixed(2)}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-stone-600">Pay Basis</span>
+                    <strong>Flat Stipend (${Number(livePayStubEmp.rate).toFixed(2)})</strong>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-stone-600">Roster Status</span>
+                  <strong>
+                    {livePayStubEmp.active ? 'Active (Included in P&L)' : 'Off-Cycle ($0.00)'}
+                  </strong>
+                </div>
+                <div className="flex justify-between border-t border-stone-300 pt-3 text-base font-bold">
+                  <span>Period Gross Payout</span>
+                  <span className="text-amber-800">${stubBreakdown.totalPay.toFixed(2)}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
