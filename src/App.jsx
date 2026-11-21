@@ -25,10 +25,15 @@ import {
   Package,
   Receipt,
   Tag,
+  Clock,
+  AlertTriangle,
+  Bell,
+  Edit3,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'msj_tier3_demo_v1';
 const ITEMS_PER_PAGE = 6;
+const VALID_CFO_TABS = ['pnl', 'employees', 'orders', 'inventory', 'expenses', 'promos'];
 
 const INITIAL_DATA = {
   products: [
@@ -249,6 +254,35 @@ const INITIAL_DATA = {
       active: false,
     },
   ],
+  shiftLogs: [
+    {
+      id: 'sh-101',
+      date: '2026-11-20',
+      empName: 'Maya Lin',
+      clockIn: '09:00 AM',
+      clockOut: '05:00 PM',
+      hours: 8,
+      otHours: 0,
+      earned: 152,
+      note: 'DTF Heat Press & Drop Prep',
+    },
+    {
+      id: 'sh-102',
+      date: '2026-11-20',
+      empName: 'Darius Brooks',
+      clockIn: '10:00 AM',
+      clockOut: '04:00 PM',
+      hours: 6,
+      otHours: 0,
+      earned: 99,
+      note: 'Order Packing & Showroom',
+    },
+  ],
+  overtimeRule: {
+    basis: 'week',
+    threshold: 40,
+    multiplier: 1.5,
+  },
   promos: [
     { id: 'pr-1', code: 'WELCOME10', type: 'percent', value: 10, active: true, uses: 9 },
     { id: 'pr-2', code: 'VIP20', type: 'fixed', value: 20, active: true, uses: 4 },
@@ -295,10 +329,33 @@ function compressImageFile(file, maxDimension = 900) {
   });
 }
 
+function parseNavHash() {
+  const clean = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+  if (!clean) return { mode: 'store', cfoTab: 'pnl' };
+  if (clean === 'store') return { mode: 'store', cfoTab: 'pnl' };
+  if (clean.startsWith('cfo-')) {
+    const sub = clean.replace('cfo-', '');
+    return {
+      mode: 'cfo',
+      cfoTab: VALID_CFO_TABS.includes(sub) ? sub : 'pnl',
+    };
+  }
+  if (VALID_CFO_TABS.includes(clean)) {
+    return { mode: 'cfo', cfoTab: clean };
+  }
+  return { mode: 'store', cfoTab: 'pnl' };
+}
+
 export default function App() {
-  const [mode, setMode] = useState('store');
-  const [cfoTab, setCfoTab] = useState('pnl');
+  const initialNav = useMemo(() => parseNavHash(), []);
+  const [mode, setMode] = useState(initialNav.mode);
+  const [cfoTab, setCfoTab] = useState(initialNav.cfoTab);
   const [storageWarning, setStorageWarning] = useState('');
+  const [browserAlertEnabled, setBrowserAlertEnabled] = useState(
+    typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'
+  );
+  const notifiedOvertimeRef = useRef(new Set());
+
   const [state, setState] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -311,6 +368,11 @@ export default function App() {
           ? parsed.products.map((p) => ({ image: '', description: '', ...p }))
           : INITIAL_DATA.products,
         employees: Array.isArray(parsed.employees) ? parsed.employees : INITIAL_DATA.employees,
+        shiftLogs: Array.isArray(parsed.shiftLogs) ? parsed.shiftLogs : INITIAL_DATA.shiftLogs,
+        overtimeRule: {
+          ...INITIAL_DATA.overtimeRule,
+          ...(parsed.overtimeRule || {}),
+        },
         promos: Array.isArray(parsed.promos) ? parsed.promos : INITIAL_DATA.promos,
         orders: Array.isArray(parsed.orders)
           ? parsed.orders.map((o) => ({
@@ -337,9 +399,63 @@ export default function App() {
     }
   }, [state]);
 
-  // Refs for Ctrl+K / Quick Search Focus
+  // Sync mode & tab with browser Back/Forward history + pageshow
+  const updateNavigation = (nextMode, nextTab, recordHistory = true) => {
+    const safeTab = VALID_CFO_TABS.includes(nextTab) ? nextTab : 'pnl';
+    const changed = nextMode !== mode || (nextMode === 'cfo' && safeTab !== cfoTab);
+    setMode(nextMode);
+    if (nextMode === 'cfo') {
+      setCfoTab(safeTab);
+    }
+    const targetHash = nextMode === 'store' ? '#store' : `#cfo-${safeTab}`;
+    if (window.history) {
+      if (recordHistory && changed && window.history.pushState) {
+        window.history.pushState({ tier3Mode: nextMode, tier3Tab: safeTab }, '', targetHash);
+      } else if (window.history.replaceState) {
+        window.history.replaceState({ tier3Mode: nextMode, tier3Tab: safeTab }, '', targetHash);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = (e) => {
+      if (e.state && e.state.tier3Mode) {
+        setMode(e.state.tier3Mode);
+        if (VALID_CFO_TABS.includes(e.state.tier3Tab)) {
+          setCfoTab(e.state.tier3Tab);
+        }
+      } else {
+        const parsed = parseNavHash();
+        setMode(parsed.mode);
+        setCfoTab(parsed.cfoTab);
+      }
+    };
+
+    const handlePageShow = () => {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setState((prev) => ({ ...prev, ...parsed }));
+        }
+      } catch {}
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
+  // Refs for Ctrl+K / Quick Search Focus & Field Validation
   const adminSearchRef = useRef(null);
   const storeSearchRef = useRef(null);
+  const empNameInputRef = useRef(null);
+  const empRateInputRef = useRef(null);
+  const checkoutNameRef = useRef(null);
+  const checkoutEmailRef = useRef(null);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -355,6 +471,10 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [mode]);
+
+  // Field-level error states
+  const [empFieldError, setEmpFieldError] = useState({ field: '', message: '' });
+  const [checkoutFieldError, setCheckoutFieldError] = useState({ field: '', message: '' });
 
   // Storefront Catalog Discovery, Search, Filter, Sort & Pagination State
   const [storeSearch, setStoreSearch] = useState('');
@@ -375,7 +495,7 @@ export default function App() {
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
   const [orderBanner, setOrderBanner] = useState('');
 
-  // Admin & CFO Universal Search + Tab Filters
+  // Admin & CFO Universal Search + Tab Filters + Shift Correction Modal
   const [adminGlobalSearch, setAdminGlobalSearch] = useState('');
   const [adminSearchOpen, setAdminSearchOpen] = useState(false);
   const [highlightedId, setHighlightedId] = useState('');
@@ -386,6 +506,16 @@ export default function App() {
   const [inventoryCatFilter, setInventoryCatFilter] = useState('All');
   const [slipOrder, setSlipOrder] = useState(null);
   const [payStubEmp, setPayStubEmp] = useState(null);
+  const [shiftModalOpen, setShiftModalOpen] = useState(false);
+  const [shiftForm, setShiftForm] = useState({
+    id: '',
+    date: '2026-11-21',
+    empName: 'Maya Lin',
+    clockIn: '09:00 AM',
+    clockOut: '05:00 PM',
+    hours: '8',
+    note: 'Missed clock-out corrected in CFO Suite',
+  });
 
   const [newAdj, setNewAdj] = useState({
     date: '2026-11-21',
@@ -435,6 +565,9 @@ export default function App() {
     setAppliedPromo(null);
     setOrderBanner('');
     setStorageWarning('');
+    setEmpFieldError({ field: '', message: '' });
+    setCheckoutFieldError({ field: '', message: '' });
+    notifiedOvertimeRef.current.clear();
     setStoreSearch('');
     setStoreCategory('All');
     setStoreSizeFilter('All');
@@ -483,17 +616,161 @@ export default function App() {
   };
 
   const employees = state.employees || [];
+  const shiftLogs = state.shiftLogs || [];
+  const overtimeRule = state.overtimeRule || { basis: 'week', threshold: 40, multiplier: 1.5 };
   const promos = state.promos || [];
 
-  const getEmployeePayout = (emp) => {
-    if (!emp.active) return 0;
-    return emp.payType === 'hourly'
-      ? Number(emp.rate || 0) * Number(emp.hours || 0)
-      : Number(emp.rate || 0);
+  const getEmployeeBreakdown = (emp) => {
+    if (!emp.active) {
+      return { regHours: 0, otHours: 0, regPay: 0, otPay: 0, totalPay: 0 };
+    }
+    const rate = Number(emp.rate || 0);
+    if (emp.payType !== 'hourly') {
+      return { regHours: 0, otHours: 0, regPay: rate, otPay: 0, totalPay: rate };
+    }
+    const hrs = Math.max(0, Number(emp.hours || 0));
+    const thresh = Math.max(1, Number(overtimeRule.threshold || 40));
+    const mult = Math.max(1, Number(overtimeRule.multiplier || 1.5));
+    const regHours = Math.min(hrs, thresh);
+    const otHours = Math.max(0, hrs - thresh);
+    const regPay = regHours * rate;
+    const otPay = otHours * rate * mult;
+    return { regHours, otHours, regPay, otPay, totalPay: regPay + otPay };
   };
+
+  const getEmployeePayout = (emp) => getEmployeeBreakdown(emp).totalPay;
 
   const totalUnitsForProduct = (prod) =>
     Object.values(prod.sizeStock || {}).reduce((a, b) => a + Number(b || 0), 0);
+
+  // Overtime Alerts Calculation & Browser Notification Trigger
+  const overtimeAlerts = useMemo(() => {
+    const thresh = Math.max(1, Number(overtimeRule.threshold || 40));
+    const mult = Number(overtimeRule.multiplier || 1.5);
+    return employees
+      .filter((emp) => emp.active && emp.payType === 'hourly' && Number(emp.hours || 0) > thresh)
+      .map((emp) => {
+        const hrs = Number(emp.hours || 0);
+        const otHours = Number((hrs - thresh).toFixed(2));
+        const otRate = Number((Number(emp.rate || 0) * mult).toFixed(2));
+        return {
+          id: emp.id,
+          name: emp.name,
+          hours: hrs,
+          otHours,
+          otRate,
+        };
+      });
+  }, [employees, overtimeRule]);
+
+  useEffect(() => {
+    if (!browserAlertEnabled || !('Notification' in window)) return;
+    overtimeAlerts.forEach((alertItem) => {
+      const key = `${alertItem.id}-${overtimeRule.basis}-${overtimeRule.threshold}`;
+      if (!notifiedOvertimeRef.current.has(key)) {
+        notifiedOvertimeRef.current.add(key);
+        new Notification('Susquehanna Goods Overtime Alert', {
+          body: `${alertItem.name} has ${alertItem.hours}h logged (+${alertItem.otHours}h OT @ $${alertItem.otRate}/hr).`,
+        });
+      }
+    });
+  }, [overtimeAlerts, overtimeRule, browserAlertEnabled]);
+
+  const enableBrowserOvertimeAlerts = async () => {
+    if (!('Notification' in window)) return;
+    const perm = await Notification.requestPermission();
+    if (perm === 'granted') {
+      setBrowserAlertEnabled(true);
+    }
+  };
+
+  // Fix Missed Clock-Out / Log Shift Handlers
+  const openShiftCorrectionModal = (existingLog = null) => {
+    if (existingLog) {
+      setShiftForm({
+        id: existingLog.id,
+        date: existingLog.date || '2026-11-21',
+        empName: existingLog.empName || employees[0]?.name || 'Maya Lin',
+        clockIn: existingLog.clockIn || '09:00 AM',
+        clockOut: existingLog.clockOut || '05:00 PM',
+        hours: String(existingLog.hours ?? 8),
+        note: existingLog.note || 'Clock-out updated by admin',
+      });
+    } else {
+      setShiftForm({
+        id: '',
+        date: '2026-11-21',
+        empName: employees[0]?.name || 'Maya Lin',
+        clockIn: '09:00 AM',
+        clockOut: '05:00 PM',
+        hours: '8',
+        note: 'Missed clock-out corrected by admin',
+      });
+    }
+    setShiftModalOpen(true);
+  };
+
+  const handleSaveShiftCorrection = (e) => {
+    e.preventDefault();
+    const nextHours = Math.max(0.01, Number(parseFloat(shiftForm.hours || '0').toFixed(2)));
+    const existingLog = shiftForm.id ? shiftLogs.find((l) => l.id === shiftForm.id) : null;
+    const prevHours = existingLog ? Number(existingLog.hours || 0) : 0;
+    const deltaHours = Number((nextHours - prevHours).toFixed(2));
+
+    const updatedEmployees = employees.map((emp) => {
+      if (emp.name !== shiftForm.empName || emp.payType !== 'hourly') return emp;
+      return {
+        ...emp,
+        hours: Math.max(0, Number((Number(emp.hours || 0) + deltaHours).toFixed(2))),
+      };
+    });
+
+    const targetEmp = updatedEmployees.find((emp) => emp.name === shiftForm.empName);
+    const breakdown = targetEmp ? getEmployeeBreakdown(targetEmp) : { otHours: 0 };
+    const earned =
+      targetEmp && targetEmp.payType === 'hourly'
+        ? Number((nextHours * Number(targetEmp.rate || 0)).toFixed(2))
+        : Number(existingLog?.earned || 0);
+
+    const nextEntry = {
+      id: existingLog ? existingLog.id : `sh-${Date.now()}`,
+      date: shiftForm.date,
+      empName: shiftForm.empName,
+      clockIn: shiftForm.clockIn.trim() || '09:00 AM',
+      clockOut: shiftForm.clockOut.trim() || '05:00 PM',
+      hours: nextHours,
+      otHours: breakdown.otHours,
+      earned,
+      note: shiftForm.note.trim() || 'Shift corrected by admin',
+    };
+
+    const nextLogs = existingLog
+      ? shiftLogs.map((l) => (l.id === existingLog.id ? nextEntry : l))
+      : [nextEntry, ...shiftLogs];
+
+    setState((prev) => ({
+      ...prev,
+      employees: updatedEmployees,
+      shiftLogs: nextLogs,
+    }));
+    setShiftModalOpen(false);
+  };
+
+  const stepEmployeeHours = (empId, deltaOrZero) => {
+    setState((prev) => ({
+      ...prev,
+      employees: (prev.employees || []).map((item) => {
+        if (item.id !== empId) return item;
+        if (deltaOrZero === 0 || deltaOrZero === '0') {
+          return { ...item, hours: 0 };
+        }
+        return {
+          ...item,
+          hours: Math.max(0, Number((Number(item.hours || 0) + Number(deltaOrZero)).toFixed(2))),
+        };
+      }),
+    }));
+  };
 
   // Dynamic Catalog Categories
   const catalogCategories = useMemo(() => {
@@ -650,7 +927,7 @@ export default function App() {
   }, [adminGlobalSearch, state.products, state.orders, employees, state.expenses, promos, state.pnlAdjustments]);
 
   const jumpToAdminRecord = (tab, id, extraFilterReset = {}) => {
-    setCfoTab(tab);
+    updateNavigation('cfo', tab);
     setHighlightedId(id);
     setAdminSearchOpen(false);
     if (extraFilterReset.inventorySearch !== undefined) {
@@ -668,7 +945,7 @@ export default function App() {
 
   const jumpToStoreProduct = (productName) => {
     setAdminSearchOpen(false);
-    setMode('store');
+    updateNavigation('store', 'pnl');
     setStoreCategory('All');
     setStoreSizeFilter('All');
     setStoreInStockOnly(false);
@@ -815,6 +1092,18 @@ export default function App() {
     e.preventDefault();
     if (cart.length === 0) return;
 
+    setCheckoutFieldError({ field: '', message: '' });
+    if (!checkoutForm.name.trim()) {
+      setCheckoutFieldError({ field: 'name', message: 'Customer Name field is required.' });
+      checkoutNameRef.current?.focus();
+      return;
+    }
+    if (!checkoutForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutForm.email.trim())) {
+      setCheckoutFieldError({ field: 'email', message: 'Enter a valid Email Address.' });
+      checkoutEmailRef.current?.focus();
+      return;
+    }
+
     const cogs = cart.reduce((s, i) => s + i.unitCost * i.qty, 0);
     const fee = Number((cartTotal * 0.029 + 0.3).toFixed(2));
     const id = `SG-${Math.floor(2042 + Math.random() * 899)}`;
@@ -822,8 +1111,8 @@ export default function App() {
     const newOrder = {
       id,
       date: new Date().toISOString().slice(0, 10),
-      customerName: checkoutForm.name.trim() || 'Demo Shopper',
-      customerEmail: checkoutForm.email.trim() || 'buyer@example.com',
+      customerName: checkoutForm.name.trim(),
+      customerEmail: checkoutForm.email.trim(),
       address: checkoutForm.address.trim() || 'Harrisburg, PA 17112',
       items: cart.map(({ id: itemId, name, size, qty, price, unitCost }) => ({
         id: itemId,
@@ -951,7 +1240,7 @@ export default function App() {
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setMode('store')}
+              onClick={() => updateNavigation('store', cfoTab)}
               className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-xs font-semibold tracking-wide transition ${
                 mode === 'store'
                   ? 'bg-[#F6F4EF] text-[#1C1917]'
@@ -964,7 +1253,7 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setMode('cfo')}
+              onClick={() => updateNavigation('cfo', cfoTab)}
               className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-xs font-semibold tracking-wide transition ${
                 mode === 'cfo'
                   ? 'bg-amber-600 text-white'
@@ -1011,7 +1300,6 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Header Customer Search + Bag Button */}
               <div className="flex flex-1 items-center justify-end gap-3 sm:max-w-md">
                 <div className="relative flex-1">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
@@ -1054,7 +1342,6 @@ export default function App() {
           </header>
 
           <main className="mx-auto max-w-6xl px-6 py-12">
-            {/* Editorial Split Hero */}
             <div className="grid gap-8 border-b border-stone-300 pb-10 lg:grid-cols-12 lg:items-end">
               <div className="lg:col-span-7">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-800">
@@ -1067,19 +1354,17 @@ export default function App() {
               <div className="border-l border-stone-400 pl-6 lg:col-span-5">
                 <p className="text-sm leading-relaxed text-stone-700">
                   Search any garment, filter by category or available size, and sort across the full catalog below—or switch to{' '}
-                  <strong>Behind the Scenes (CFO Suite)</strong> to search across the entire store, orders, team, and ledger.
+                  <strong>Behind the Scenes (CFO Suite)</strong> to manage shifts, overtime alerts, and live P&amp;L.
                 </p>
               </div>
             </div>
 
-            {/* CATALOG SEARCH, FILTER & SORT CONTROLS */}
             <section
               id="store-catalog"
               aria-label="Catalog Filters and Search"
               className="mt-8 border border-stone-300 bg-[#EFECE4] p-5"
             >
               <div className="grid gap-3 md:grid-cols-12 md:items-center">
-                {/* Search Input */}
                 <div className="relative md:col-span-5">
                   <Search className="pointer-events-none absolute left-3.5 top-2.5 h-4 w-4 text-stone-500" />
                   <input
@@ -1107,7 +1392,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Sort Selector */}
                 <div className="md:col-span-4">
                   <select
                     value={storeSort}
@@ -1126,7 +1410,6 @@ export default function App() {
                   </select>
                 </div>
 
-                {/* In-Stock Toggle */}
                 <div className="md:col-span-3">
                   <button
                     type="button"
@@ -1145,7 +1428,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Category & Size Filter Pills */}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-stone-300 pt-4">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-stone-500">
@@ -1200,7 +1482,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Active Results & Clear Bar */}
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone-300/80 pt-3 text-xs text-stone-600">
                 <span>
                   Showing <strong>{paginatedStoreProducts.length}</strong> of{' '}
@@ -1219,7 +1500,6 @@ export default function App() {
               </div>
             </section>
 
-            {/* EMPTY STATE */}
             {filteredStoreProducts.length === 0 ? (
               <div className="mt-10 border border-stone-300 bg-white/80 p-12 text-center">
                 <p className="font-serif text-2xl text-[#1C1917]">No garments match those filters</p>
@@ -1236,7 +1516,6 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* SIGNATURE EDITORIAL SPOTLIGHT (Shown on Page 1 when browsing unfiltered) */}
                 {showEditorialSpotlight && spotlightFeatured && (
                   <div className="mt-10 grid gap-8 lg:grid-cols-12">
                     <article className="flex flex-col justify-between border border-stone-300 bg-[#EFECE4] p-7 lg:col-span-6">
@@ -1281,7 +1560,6 @@ export default function App() {
                           </p>
                         )}
 
-                        {/* Interactive Size Availability Strip */}
                         <div className="mt-4 flex flex-wrap items-center gap-1.5">
                           {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
                             const qty = Number(spotlightFeatured.sizeStock?.[sz] || 0);
@@ -1392,7 +1670,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* FULL SCALABLE CATALOG GRID */}
                 {gridProducts.length > 0 && (
                   <div className="mt-10">
                     {showEditorialSpotlight && (
@@ -1456,7 +1733,6 @@ export default function App() {
                                 <p className="mt-1.5 text-xs text-stone-600">{prod.description}</p>
                               )}
 
-                              {/* Live Per-Size Pills */}
                               <div className="mt-3.5 flex flex-wrap gap-1.5">
                                 {['S', 'M', 'L', 'XL', '2XL'].map((sz) => {
                                   const qty = Number(prod.sizeStock?.[sz] || 0);
@@ -1497,7 +1773,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* PAGINATION CONTROLS */}
                 {totalPages > 1 && (
                   <nav
                     aria-label="Catalog Pagination"
@@ -1563,7 +1838,33 @@ export default function App() {
             </div>
           )}
 
-          {/* UNIVERSAL ADMIN OMNISEARCH BAR (Searches Everything Across Store & CFO Suite) */}
+          {/* LIVE OVERTIME UPDATE BANNER */}
+          {overtimeAlerts.length > 0 && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-2 border-amber-600 bg-amber-50 px-4 py-3 text-xs text-amber-950">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-800" />
+                <span>
+                  <strong>Overtime Alert:</strong>{' '}
+                  {overtimeAlerts
+                    .map(
+                      (a) =>
+                        `${a.name} (${a.hours}h logged / +${a.otHours}h OT @ $${a.otRate}/hr)`
+                    )
+                    .join(' • ')}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={enableBrowserOvertimeAlerts}
+                className="inline-flex cursor-pointer items-center gap-1 border border-amber-800 bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-950 hover:bg-amber-100"
+              >
+                <Bell className="h-3 w-3" />
+                {browserAlertEnabled ? 'Browser Alerts On' : 'Enable Browser Alerts'}
+              </button>
+            </div>
+          )}
+
+          {/* UNIVERSAL ADMIN OMNISEARCH BAR */}
           <div className="relative mb-7 border-2 border-[#1C1917] bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">
@@ -1602,7 +1903,6 @@ export default function App() {
               )}
             </div>
 
-            {/* LIVE CATEGORIZED OMNISEARCH DROPDOWN */}
             {adminSearchOpen && adminGlobalSearch.trim() !== '' && (
               <div className="mt-3 max-h-96 overflow-y-auto border border-stone-300 bg-[#F6F4EF] p-4 shadow-xl">
                 <div className="mb-3 flex items-center justify-between border-b border-stone-300 pb-2 text-xs">
@@ -1624,7 +1924,6 @@ export default function App() {
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    {/* Matched Storefront & Inventory Products */}
                     {adminOmnisearchResults.products.length > 0 && (
                       <div>
                         <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
@@ -1668,7 +1967,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Matched Orders */}
                     {adminOmnisearchResults.orders.length > 0 && (
                       <div>
                         <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
@@ -1703,7 +2001,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Matched Employees */}
                     {adminOmnisearchResults.employees.length > 0 && (
                       <div>
                         <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800">
@@ -1736,7 +2033,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Matched Expenses, Promos & P&L Adjustments */}
                     {(adminOmnisearchResults.expenses.length > 0 ||
                       adminOmnisearchResults.promos.length > 0 ||
                       adminOmnisearchResults.adjustments.length > 0) && (
@@ -1829,7 +2125,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* 6 EXECUTIVE KPI CARDS */}
           <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <div className="border border-stone-300 bg-white/85 p-4">
               <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
@@ -1888,7 +2183,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 6 COMMAND CENTER TABS */}
           <div className="mb-6 flex flex-wrap gap-2 border-b border-stone-300 pb-4">
             {[
               { id: 'pnl', label: 'P&L & Profit-First' },
@@ -1904,7 +2198,7 @@ export default function App() {
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setCfoTab(t.id)}
+                onClick={() => updateNavigation('cfo', t.id)}
                 className={`cursor-pointer px-4 py-2 text-xs font-semibold uppercase tracking-wider transition ${
                   cfoTab === t.id
                     ? 'bg-[#1C1917] text-[#F6F4EF]'
@@ -1916,9 +2210,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* =================================================================
-              TAB 1: EDITABLE P&L + PROFIT-FIRST BUCKETS + BREAK-EVEN INSIGHT
-             ================================================================= */}
+          {/* TAB 1: EDITABLE P&L + PROFIT-FIRST BUCKETS */}
           {cfoTab === 'pnl' && (
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="border border-stone-300 bg-white/90 p-6 lg:col-span-7">
@@ -2178,7 +2470,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Break-Even & Labor Ratio Executive Box */}
                 <div className="border border-stone-300 bg-[#EFECE4] p-5">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-amber-900">
                     CFO Operating Telemetry
@@ -2202,9 +2493,7 @@ export default function App() {
             </div>
           )}
 
-          {/* =================================================================
-              TAB 2: TEAM & PAYROLL (EMPLOYEES SECTION)
-             ================================================================= */}
+          {/* TAB 2: TEAM, OVERTIME POLICY, UNIFORM ROSTER & SHIFT LOGS */}
           {cfoTab === 'employees' && (
             <div className="space-y-6">
               <div className="grid gap-4 sm:grid-cols-4">
@@ -2239,19 +2528,81 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Overtime Policy Configurator */}
+              <div className="border border-stone-300 bg-white/90 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-amber-800">
+                      Overtime Policy &amp; Alerts
+                    </span>
+                    <h3 className="font-serif text-lg text-[#1C1917]">
+                      Overtime Threshold ({overtimeRule.threshold}h / {overtimeRule.basis} @{' '}
+                      {overtimeRule.multiplier}×)
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      value={overtimeRule.basis}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: { ...prev.overtimeRule, basis: e.target.value },
+                        }))
+                      }
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <option value="week">Per Week</option>
+                      <option value="day">Per Day</option>
+                    </select>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.5"
+                      value={overtimeRule.threshold}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: {
+                            ...prev.overtimeRule,
+                            threshold: Math.max(1, parseFloat(e.target.value || '40')),
+                          },
+                        }))
+                      }
+                      className="w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1.5 text-xs font-bold"
+                    />
+                    <select
+                      value={overtimeRule.multiplier}
+                      onChange={(e) =>
+                        setState((prev) => ({
+                          ...prev,
+                          overtimeRule: {
+                            ...prev.overtimeRule,
+                            multiplier: parseFloat(e.target.value || '1.5'),
+                          },
+                        }))
+                      }
+                      className="border border-stone-300 bg-[#F6F4EF] px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <option value={1.5}>1.5× Overtime</option>
+                      <option value={1.25}>1.25× Overtime</option>
+                      <option value={2}>2.0× Double-Time</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <div className="border border-stone-300 bg-white/90 p-6">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h2 className="inline-flex items-center gap-2 font-serif text-xl font-normal text-[#1C1917]">
                       <Users className="h-5 w-5 text-amber-800" />
-                      Employees, Shift Hours &amp; Role Permissions
+                      Active Roster &amp; Live Payroll
                     </h2>
                     <p className="mt-1 text-xs text-stone-600">
-                      Add staff members, adjust hourly rates or shift hours with 1-click steppers, inspect pay stubs, or toggle Active / Off-Cycle status.
+                      Uniform roster slots for rates, hours, reset, period pay, and pay stubs.
                     </p>
                   </div>
 
-                  {/* Employee Search Input */}
                   <div className="relative w-full sm:w-64">
                     <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
                     <input
@@ -2276,7 +2627,17 @@ export default function App() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (!newEmp.name.trim() || !newEmp.role.trim() || !newEmp.rate) return;
+                    setEmpFieldError({ field: '', message: '' });
+                    if (!newEmp.name.trim()) {
+                      setEmpFieldError({ field: 'name', message: 'Full Name is required.' });
+                      empNameInputRef.current?.focus();
+                      return;
+                    }
+                    if (!newEmp.rate || parseFloat(newEmp.rate) < 0) {
+                      setEmpFieldError({ field: 'rate', message: 'Enter a valid pay rate ($0 or higher).' });
+                      empRateInputRef.current?.focus();
+                      return;
+                    }
                     setState({
                       ...state,
                       employees: [
@@ -2284,7 +2645,7 @@ export default function App() {
                         {
                           id: `emp-${Date.now()}`,
                           name: newEmp.name.trim(),
-                          role: newEmp.role.trim(),
+                          role: newEmp.role.trim() || 'Studio Associate',
                           department: newEmp.department,
                           accessLevel: newEmp.accessLevel,
                           payType: newEmp.payType,
@@ -2306,14 +2667,20 @@ export default function App() {
                   }}
                   className="mt-5 grid gap-2.5 border border-stone-200 bg-[#F6F4EF] p-4 sm:grid-cols-12"
                 >
-                  <input
-                    type="text"
-                    required
-                    placeholder="Full Name"
-                    value={newEmp.name}
-                    onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
-                    className="border border-stone-300 bg-white px-3 py-2 text-xs sm:col-span-3"
-                  />
+                  <div className="sm:col-span-3">
+                    <input
+                      ref={empNameInputRef}
+                      type="text"
+                      placeholder="Full Name"
+                      value={newEmp.name}
+                      onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
+                      className={`w-full border bg-white px-3 py-2 text-xs ${
+                        empFieldError.field === 'name'
+                          ? 'border-rose-600 ring-2 ring-rose-200'
+                          : 'border-stone-300'
+                      }`}
+                    />
+                  </div>
                   <input
                     type="text"
                     required
@@ -2342,14 +2709,18 @@ export default function App() {
                   </select>
                   <div className="flex gap-1.5 sm:col-span-2">
                     <input
+                      ref={empRateInputRef}
                       type="number"
-                      required
                       min="0"
                       step="0.5"
                       placeholder={newEmp.payType === 'hourly' ? '$/hr' : 'Flat $'}
                       value={newEmp.rate}
                       onChange={(e) => setNewEmp({ ...newEmp, rate: e.target.value })}
-                      className="w-full border border-stone-300 bg-white px-2.5 py-2 text-xs"
+                      className={`w-full border bg-white px-2.5 py-2 text-xs ${
+                        empFieldError.field === 'rate'
+                          ? 'border-rose-600 ring-2 ring-rose-200'
+                          : 'border-stone-300'
+                      }`}
                     />
                     {newEmp.payType === 'hourly' && (
                       <input
@@ -2371,177 +2742,240 @@ export default function App() {
                     <UserPlus className="h-3.5 w-3.5" />
                     Add
                   </button>
+                  {empFieldError.message && (
+                    <p className="text-xs font-semibold text-rose-700 sm:col-span-12">
+                      {empFieldError.message}
+                    </p>
+                  )}
                 </form>
 
                 <div className="mt-6 space-y-3">
                   {filteredEmployees.map((emp) => {
-                    const payout = getEmployeePayout(emp);
+                    const breakdown = getEmployeeBreakdown(emp);
+                    const payout = breakdown.totalPay;
+                    const showReset = emp.payType === 'hourly' && Number(emp.hours || 0) > 0;
                     return (
                       <div
                         key={emp.id}
-                        className={`flex flex-wrap items-center justify-between gap-4 border p-5 transition ${
+                        className={`grid grid-cols-1 items-center gap-4 border p-5 transition lg:grid-cols-12 ${
                           highlightedId === emp.id
                             ? 'border-2 border-amber-700 bg-amber-50/50'
                             : 'border-stone-300 bg-white'
                         } ${!emp.active ? 'opacity-65' : ''}`}
                       >
-                        <div className="min-w-[210px]">
+                        <div className="min-w-0 lg:col-span-4">
                           <div className="flex flex-wrap items-center gap-2">
                             <strong className="text-base text-[#1C1917]">{emp.name}</strong>
+                            {breakdown.otHours > 0 && (
+                              <span className="border border-amber-600/40 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-900">
+                                +{breakdown.otHours.toFixed(2)}h OT
+                              </span>
+                            )}
                             <span className="border border-stone-300 bg-[#F6F4EF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
                               {emp.department}
                             </span>
-                            <span className="inline-flex items-center gap-1 text-[11px] text-stone-500">
+                          </div>
+                          <p className="mt-1 text-xs text-stone-600">
+                            {emp.role} &bull;{' '}
+                            <span className="inline-flex items-center gap-1 text-stone-500">
                               <Briefcase className="h-3 w-3" />
                               {emp.accessLevel}
                             </span>
-                          </div>
-                          <p className="mt-1 text-xs text-stone-600">{emp.role}</p>
+                          </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold uppercase text-stone-500">
-                              {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={emp.rate}
-                              onChange={(e) =>
-                                setState({
-                                  ...state,
-                                  employees: employees.map((item) =>
-                                    item.id === emp.id
-                                      ? { ...item, rate: parseFloat(e.target.value) || 0 }
-                                      : item
-                                  ),
-                                })
-                              }
-                              className="mt-1 w-22 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
-                            />
-                          </div>
+                        <div className="lg:col-span-2">
+                          <label className="block text-[10px] font-bold uppercase text-stone-500">
+                            {emp.payType === 'hourly' ? 'Rate ($/hr)' : 'Flat ($)'}
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={emp.rate}
+                            onChange={(e) =>
+                              setState({
+                                ...state,
+                                employees: employees.map((item) =>
+                                  item.id === emp.id
+                                    ? { ...item, rate: parseFloat(e.target.value) || 0 }
+                                    : item
+                                ),
+                              })
+                            }
+                            className="mt-1 w-24 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-xs font-bold"
+                          />
+                        </div>
 
+                        <div className="lg:col-span-2">
                           {emp.payType === 'hourly' ? (
-                            <div>
+                            <>
                               <label className="block text-[10px] font-bold uppercase text-stone-500">
                                 Shift Hours
                               </label>
-                              <div className="mt-1 flex items-center border border-stone-300 bg-[#F6F4EF]">
+                              <div className="mt-1 inline-flex items-center border border-stone-300 bg-[#F6F4EF]">
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setState({
-                                      ...state,
-                                      employees: employees.map((item) =>
-                                        item.id === emp.id
-                                          ? {
-                                              ...item,
-                                              hours: Math.max(0, Number(item.hours || 0) - 1),
-                                            }
-                                          : item
-                                      ),
-                                    })
-                                  }
+                                  onClick={() => stepEmployeeHours(emp.id, -1)}
                                   className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
                                 >
                                   <Minus className="h-3 w-3" />
                                 </button>
-                                <span className="min-w-10 text-center text-xs font-bold">
+                                <span className="min-w-11 text-center text-xs font-bold">
                                   {emp.hours}h
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setState({
-                                      ...state,
-                                      employees: employees.map((item) =>
-                                        item.id === emp.id
-                                          ? { ...item, hours: Number(item.hours || 0) + 1 }
-                                          : item
-                                      ),
-                                    })
-                                  }
+                                  onClick={() => stepEmployeeHours(emp.id, 1)}
                                   className="cursor-pointer px-2 py-1 text-stone-700 hover:bg-stone-200"
                                 >
                                   <Plus className="h-3 w-3" />
                                 </button>
                               </div>
-                            </div>
+                            </>
                           ) : (
-                            <div className="w-24">
-                              <span className="block text-[10px] font-bold uppercase text-stone-500">
-                                Schedule
-                              </span>
-                              <span className="mt-1.5 block text-xs font-semibold text-stone-600">
-                                Per Project
-                              </span>
+                            <div className="pt-4 text-xs font-semibold text-stone-600">
+                              Per Project
                             </div>
                           )}
+                        </div>
 
-                          <div className="min-w-[85px] text-right">
-                            <span className="block text-[10px] font-bold uppercase text-stone-500">
-                              Period Pay
-                            </span>
-                            <strong className="text-sm font-bold text-rose-700">
-                              -${payout.toFixed(2)}
-                            </strong>
-                          </div>
+                        <div className="lg:col-span-2 lg:text-right">
+                          <span className="block text-[10px] font-bold uppercase text-stone-500">
+                            Period Pay
+                          </span>
+                          <strong className="text-sm font-bold text-rose-700">
+                            -${payout.toFixed(2)}
+                          </strong>
+                        </div>
 
-                          <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 lg:col-span-2 lg:justify-end">
+                          {showReset ? (
                             <button
                               type="button"
-                              onClick={() =>
-                                setState({
-                                  ...state,
-                                  employees: employees.map((item) =>
-                                    item.id === emp.id ? { ...item, active: !item.active } : item
-                                  ),
-                                })
-                              }
-                              className={`cursor-pointer border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider ${
-                                emp.active
-                                  ? 'border-amber-700/40 bg-amber-50 text-amber-900'
-                                  : 'border-stone-300 bg-stone-100 text-stone-600'
-                              }`}
+                              onClick={() => stepEmployeeHours(emp.id, 0)}
+                              className="cursor-pointer border border-stone-300 bg-[#F6F4EF] px-2 py-1 text-[10px] font-bold uppercase text-[#1C1917] hover:bg-stone-200"
                             >
-                              {emp.active ? 'Active' : 'Off-Cycle'}
+                              Reset Hrs
                             </button>
+                          ) : (
+                            <span className="inline-block w-14" />
+                          )}
 
-                            <button
-                              type="button"
-                              onClick={() => setPayStubEmp(emp)}
-                              className="cursor-pointer border border-stone-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
-                            >
-                              Pay Stub
-                            </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setState({
+                                ...state,
+                                employees: employees.map((item) =>
+                                  item.id === emp.id ? { ...item, active: !item.active } : item
+                                ),
+                              })
+                            }
+                            className={`cursor-pointer border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${
+                              emp.active
+                                ? 'border-amber-700/40 bg-amber-50 text-amber-900'
+                                : 'border-stone-300 bg-stone-100 text-stone-600'
+                            }`}
+                          >
+                            {emp.active ? 'Active' : 'Off-Cycle'}
+                          </button>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setState({
-                                  ...state,
-                                  employees: employees.filter((item) => item.id !== emp.id),
-                                })
-                              }
-                              className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPayStubEmp(emp)}
+                            className="cursor-pointer border border-stone-300 bg-white px-2 py-1 text-[11px] font-semibold text-[#1C1917] hover:bg-stone-100"
+                          >
+                            Stub
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setState({
+                                ...state,
+                                employees: employees.filter((item) => item.id !== emp.id),
+                              })
+                            }
+                            className="cursor-pointer p-1 text-stone-400 hover:text-rose-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Completed Shift Logs & Missed Clock-Out Correction */}
+              <div className="border border-stone-300 bg-white/90 p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="inline-flex items-center gap-2 font-serif text-lg font-normal text-[#1C1917]">
+                      <Clock className="h-4 w-4 text-amber-800" />
+                      Shift Logs &amp; Missed Clock-Out Corrections ({shiftLogs.length})
+                    </h3>
+                    <p className="mt-0.5 text-xs text-stone-600">
+                      Fix missed clock-outs or add a forgotten shift to update hours and payroll automatically.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openShiftCorrectionModal(null)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 bg-[#1C1917] px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Log Missed Shift
+                  </button>
+                </div>
+
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-stone-300 bg-[#F6F4EF] text-[10px] uppercase tracking-wider text-stone-600">
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Employee</th>
+                        <th className="py-2.5 px-3">Clock In</th>
+                        <th className="py-2.5 px-3">Clock Out</th>
+                        <th className="py-2.5 px-3">Hours</th>
+                        <th className="py-2.5 px-3">Pay</th>
+                        <th className="py-2.5 px-3">Note</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {shiftLogs.map((log) => (
+                        <tr key={log.id} className="bg-white">
+                          <td className="py-2.5 px-3 font-semibold">{log.date}</td>
+                          <td className="py-2.5 px-3">{log.empName}</td>
+                          <td className="py-2.5 px-3">{log.clockIn}</td>
+                          <td className="py-2.5 px-3">{log.clockOut}</td>
+                          <td className="py-2.5 px-3 font-bold">{Number(log.hours).toFixed(2)}h</td>
+                          <td className="py-2.5 px-3 font-semibold text-rose-700">
+                            -${Number(log.earned || 0).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 px-3 text-stone-600">{log.note}</td>
+                          <td className="py-2.5 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => openShiftCorrectionModal(log)}
+                              className="inline-flex cursor-pointer items-center gap-1 border border-stone-300 bg-[#F6F4EF] px-2.5 py-1 text-[11px] font-semibold text-[#1C1917] hover:border-[#1C1917]"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              Fix Clock-Out
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* =================================================================
-              TAB 3: ORDERS, FULFILLMENT & PACKING SLIPS
-             ================================================================= */}
+          {/* TAB 3: ORDERS, FULFILLMENT & PACKING SLIPS */}
           {cfoTab === 'orders' && (
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2562,7 +2996,6 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Order Search Input */}
                 <div className="flex items-center gap-3">
                   <div className="relative w-64">
                     <Search className="pointer-events-none absolute left-3 top-2 h-3.5 w-3.5 text-stone-500" />
@@ -2714,9 +3147,7 @@ export default function App() {
             </div>
           )}
 
-          {/* =================================================================
-              TAB 4: INVENTORY, PRODUCT IMAGE UPLOADS & SKU MARGINS
-             ================================================================= */}
+          {/* TAB 4: INVENTORY, PRODUCT IMAGE UPLOADS & SKU MARGINS */}
           {cfoTab === 'inventory' && (
             <div className="space-y-6">
               <div className="border border-stone-300 bg-white/90 p-6">
@@ -2730,7 +3161,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Quick Admin Catalog Search & Category Filter */}
                   <div className="flex flex-wrap gap-2">
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-stone-500" />
@@ -2780,7 +3210,6 @@ export default function App() {
                         }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-4">
-                          {/* Product Photo Uploader + Title */}
                           <div className="flex items-start gap-4">
                             <div className="flex flex-col items-center gap-1.5">
                               <div className="flex h-20 w-20 items-center justify-center overflow-hidden border border-stone-300 bg-white">
@@ -2847,7 +3276,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Retail Price, Unit COGS & Margin */}
                           <div className="flex flex-wrap items-center gap-4">
                             <div>
                               <label className="block text-[10px] font-bold uppercase text-stone-500">
@@ -2904,7 +3332,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Size-by-size live stock inputs */}
                         <div className="mt-4 grid grid-cols-5 gap-2 border-t border-stone-300 pt-3 sm:max-w-md">
                           {['S', 'M', 'L', 'XL', '2XL'].map((sz) => (
                             <div key={sz} className="text-center">
@@ -2945,7 +3372,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Publish New SKU Form with Image Upload */}
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -3087,9 +3513,7 @@ export default function App() {
             </div>
           )}
 
-          {/* =================================================================
-              TAB 5: EXPENSES & OVERHEAD LEDGER
-             ================================================================= */}
+          {/* TAB 5: EXPENSES & OVERHEAD LEDGER */}
           {cfoTab === 'expenses' && (
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="border border-stone-300 bg-white/90 p-6 lg:col-span-8">
@@ -3217,9 +3641,7 @@ export default function App() {
             </div>
           )}
 
-          {/* =================================================================
-              TAB 6: PROMO CODES & DISCOUNTS
-             ================================================================= */}
+          {/* TAB 6: PROMO CODES & DISCOUNTS */}
           {cfoTab === 'promos' && (
             <div className="max-w-2xl space-y-6">
               <form
@@ -3318,6 +3740,110 @@ export default function App() {
             </div>
           )}
         </main>
+      )}
+
+      {/* FIX MISSED CLOCK-OUT / SHIFT LOG MODAL */}
+      {shiftModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4"
+          onClick={() => setShiftModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md border border-stone-300 bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+              <h3 className="font-serif text-xl text-[#1C1917]">
+                {shiftForm.id ? 'Fix Clock-Out / Edit Shift' : 'Log Missed Clock-Out / Shift'}
+              </h3>
+              <button type="button" onClick={() => setShiftModalOpen(false)}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveShiftCorrection} className="mt-4 space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold uppercase text-stone-500">Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={shiftForm.date}
+                    onChange={(e) => setShiftForm({ ...shiftForm, date: e.target.value })}
+                    className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold uppercase text-stone-500">Employee</label>
+                  <select
+                    value={shiftForm.empName}
+                    onChange={(e) => setShiftForm({ ...shiftForm, empName: e.target.value })}
+                    className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2 font-semibold"
+                  >
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.name}>
+                        {emp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold uppercase text-stone-500">Clock In</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.clockIn}
+                    onChange={(e) => setShiftForm({ ...shiftForm, clockIn: e.target.value })}
+                    className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold uppercase text-stone-500">Clock Out (Fixed)</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.clockOut}
+                    onChange={(e) => setShiftForm({ ...shiftForm, clockOut: e.target.value })}
+                    className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold uppercase text-stone-500">Total Shift Hours</label>
+                <input
+                  type="number"
+                  required
+                  min="0.01"
+                  step="0.01"
+                  value={shiftForm.hours}
+                  onChange={(e) => setShiftForm({ ...shiftForm, hours: e.target.value })}
+                  className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold uppercase text-stone-500">Correction Note</label>
+                <input
+                  type="text"
+                  value={shiftForm.note}
+                  onChange={(e) => setShiftForm({ ...shiftForm, note: e.target.value })}
+                  className="mt-1 w-full border border-stone-300 bg-[#F6F4EF] px-2.5 py-2"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full cursor-pointer bg-[#1C1917] py-2.5 text-xs font-semibold uppercase tracking-wider text-[#F6F4EF] hover:bg-amber-800"
+              >
+                Save Shift Correction
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* QUICK-VIEW SIZE MODAL */}
@@ -3487,22 +4013,34 @@ export default function App() {
                   </div>
                 </div>
 
-                <input
-                  type="text"
-                  required
-                  placeholder="Customer Name"
-                  value={checkoutForm.name}
-                  onChange={(e) => setCheckoutForm({ ...checkoutForm, name: e.target.value })}
-                  className="w-full border border-stone-300 bg-white px-3 py-2 text-xs"
-                />
-                <input
-                  type="email"
-                  required
-                  placeholder="Email Address"
-                  value={checkoutForm.email}
-                  onChange={(e) => setCheckoutForm({ ...checkoutForm, email: e.target.value })}
-                  className="w-full border border-stone-300 bg-white px-3 py-2 text-xs"
-                />
+                <div>
+                  <input
+                    ref={checkoutNameRef}
+                    type="text"
+                    placeholder="Customer Name"
+                    value={checkoutForm.name}
+                    onChange={(e) => setCheckoutForm({ ...checkoutForm, name: e.target.value })}
+                    className={`w-full border bg-white px-3 py-2 text-xs ${
+                      checkoutFieldError.field === 'name'
+                        ? 'border-rose-600 ring-2 ring-rose-200'
+                        : 'border-stone-300'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <input
+                    ref={checkoutEmailRef}
+                    type="email"
+                    placeholder="Email Address"
+                    value={checkoutForm.email}
+                    onChange={(e) => setCheckoutForm({ ...checkoutForm, email: e.target.value })}
+                    className={`w-full border bg-white px-3 py-2 text-xs ${
+                      checkoutFieldError.field === 'email'
+                        ? 'border-rose-600 ring-2 ring-rose-200'
+                        : 'border-stone-300'
+                    }`}
+                  />
+                </div>
                 <input
                   type="text"
                   required
@@ -3511,6 +4049,9 @@ export default function App() {
                   onChange={(e) => setCheckoutForm({ ...checkoutForm, address: e.target.value })}
                   className="w-full border border-stone-300 bg-white px-3 py-2 text-xs"
                 />
+                {checkoutFieldError.message && (
+                  <p className="text-xs font-semibold text-rose-700">{checkoutFieldError.message}</p>
+                )}
                 <button
                   type="submit"
                   className="w-full cursor-pointer bg-amber-800 py-3 text-xs font-semibold uppercase tracking-widest text-white"
